@@ -1,0 +1,78 @@
+name: Deploy or Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "镜像 Tag（例如 latest 或 sha-xxxx）"
+        required: true
+        default: "latest"
+      environment:
+        description: "部署环境标识"
+        required: true
+        type: choice
+        options:
+          - production
+          - staging
+        default: production
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy by SSH
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    env:
+      IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/eval-any-agent
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+      GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+      GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+    steps:
+      - name: Validate required secrets
+        run: |
+          set -eu
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_PATH"
+          test -n "$GHCR_USERNAME"
+          test -n "$GHCR_TOKEN"
+
+      - name: Setup SSH key
+        run: |
+          set -eu
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "${DEPLOY_PORT:-22}" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy
+        run: |
+          set -eu
+          APP_IMAGE="${IMAGE_REPO}:${{ github.event.inputs.image_tag }}"
+          SSH_PORT="${DEPLOY_PORT:-22}"
+
+          ssh -p "$SSH_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            APP_IMAGE="$APP_IMAGE" \
+            DEPLOY_PATH="$DEPLOY_PATH" \
+            GHCR_USERNAME="$GHCR_USERNAME" \
+            GHCR_TOKEN="$GHCR_TOKEN" \
+            'bash -s' <<'REMOTE'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+          docker pull "$APP_IMAGE"
+
+          APP_IMAGE="$APP_IMAGE" docker compose \
+            --env-file env/.env.docker \
+            -f docker-compose.yml \
+            -f docker-compose.deploy.yml \
+            up -d --no-build
+
+          docker compose --env-file env/.env.docker ps
+REMOTE

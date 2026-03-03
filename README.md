@@ -144,3 +144,48 @@ SQLite 数据保存在命名卷 `app_data`，重建容器不会丢失数据。
 ### 7. Apple Silicon 说明
 
 本方案以 `linux/amd64` 为优先目标。Apple Silicon 机器请通过 `buildx` 跨平台构建，并按上述 compose 命令运行。
+
+## GitHub + Docker 自动化
+
+本仓库已内置 3 个 GitHub Actions：
+
+- `.github/workflows/ci-docker.yml`
+  - 触发：`pull_request`
+  - 功能：仅执行 `linux/amd64` 镜像构建校验（不推送）
+- `.github/workflows/release-image.yml`
+  - 触发：`push main`、手动触发
+  - 功能：构建并推送镜像到 GHCR
+  - 产物 Tag：`latest`（main）和 `sha-<commit>`
+- `.github/workflows/deploy.yml`
+  - 触发：手动触发（`workflow_dispatch`）
+  - 功能：通过 SSH 在远程服务器执行部署/回滚
+  - 支持输入 `image_tag`（例如 `latest` 或 `sha-xxxx`）
+
+### 部署工作流需要的 Secrets
+
+在 GitHub 仓库 `Settings -> Secrets and variables -> Actions` 中配置：
+
+- `DEPLOY_HOST`：远程服务器地址
+- `DEPLOY_USER`：SSH 用户
+- `DEPLOY_SSH_KEY`：私钥内容（建议 ed25519）
+- `DEPLOY_PATH`：服务器上的项目目录（包含 `docker-compose.yml`）
+- `DEPLOY_PORT`：SSH 端口（可选，默认 22）
+- `GHCR_USERNAME`：可拉取 GHCR 镜像的用户名
+- `GHCR_TOKEN`：可拉取 GHCR 镜像的 Token（建议最小权限）
+
+### 服务器端准备
+
+远程服务器目录（`DEPLOY_PATH`）需包含：
+
+- `docker-compose.yml`
+- `docker-compose.deploy.yml`
+- `env/.env.docker`
+- `docker/nginx/ssl/fullchain.pem`
+- `docker/nginx/ssl/privkey.pem`
+
+部署流程会自动：
+
+1. 登录 GHCR
+2. 拉取指定 tag 镜像
+3. 执行：
+   - `APP_IMAGE=<ghcr image:tag> docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml up -d --no-build`
