@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  datasets Dataset[]
+  profiles MappingProfile[]
+  tasks    EvalTask[]
+}
+
+model Dataset {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  fileType  String
+  rowCount  Int
+  columns   String
+  rows      String
+  createdAt DateTime @default(now())
+
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profiles MappingProfile[]
+  tasks    EvalTask[]
+
+  @@index([userId])
+}
+
+model MappingProfile {
+  id                  String   @id @default(cuid())
+  userId              String
+  datasetId           String?
+  name                String
+  upstreamUrl         String
+  method              String   @default("POST")
+  requestTemplate     String
+  headers             String
+  inputBindings       String
+  extractRules        String
+  expectedSchema      String?
+  streamProtocol      String   @default("auto")
+  doneStrategy        String   @default("auto")
+  doneRules           String
+  doneRequired        Boolean  @default(false)
+  timeoutMs           Int      @default(60000)
+  retryCount          Int      @default(2)
+  idleTimeoutMs       Int      @default(15000)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dataset Dataset? @relation(fields: [datasetId], references: [id], onDelete: SetNull)
+  tasks   EvalTask[]
+
+  @@index([userId])
+  @@index([datasetId])
+}
+
+model EvalTask {
+  id          String   @id @default(cuid())
+  userId      String
+  datasetId   String
+  profileId   String
+  status      String
+  concurrency Int
+  timeoutMs   Int
+  retryCount  Int
+  totalRows   Int
+  successRows Int      @default(0)
+  failedRows  Int      @default(0)
+  startedAt   DateTime?
+  endedAt     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dataset Dataset        @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  profile MappingProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  results EvalResult[]
+
+  @@index([userId])
+  @@index([datasetId])
+  @@index([profileId])
+}
+
+model EvalResult {
+  id                 String   @id @default(cuid())
+  taskId              String
+  rowIndex            Int
+  inputData           String
+  requestPayload      String?
+  outputs             String
+  ttftMs              Int?
+  latencyMs           Int?
+  status              String
+  errorType           String?
+  errorMessage        String?
+  endReason           String?
+  ruleHit             String?
+  rawTrace            String?
+  createdAt           DateTime @default(now())
+
+  task EvalTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([rowIndex])
+}

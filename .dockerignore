@@ -1,0 +1,15 @@
+.git
+.gitignore
+.DS_Store
+node_modules
+.next
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+coverage
+dist
+tmp
+*.local
+prisma/dev.db
+env/.env.docker
