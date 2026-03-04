@@ -97,6 +97,7 @@ cp env/.env.docker.example env/.env.docker
 
 - `AUTH_SECRET`（必须修改为强随机值）
 - `DEFAULT_ADMIN_PASSWORD`（建议首次部署前修改）
+- `NGINX_HTTPS_PORT`（默认建议 `18443`，避免常见端口冲突）
 
 ### 2. 准备 HTTPS 证书
 
@@ -129,7 +130,7 @@ docker compose --env-file env/.env.docker up -d --build
 
 ### 5. 访问与登录
 
-- HTTPS：`https://<your-domain-or-ip>/login`
+- HTTPS：`https://<your-domain-or-ip>:18443/login`（默认端口）
 - 首次启动会自动初始化 SQLite 并种子默认管理员账号
 
 ### 6. 停止与重启
