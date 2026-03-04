@@ -1,0 +1,63 @@
+name: Package Tarball
+
+on:
+  push:
+    branches: ["**"]
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Build tar.gz package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version and package name
+        id: vars
+        run: |
+          set -eu
+          PKG_VERSION="$(node -p \"require('./package.json').version\")"
+          SHORT_SHA="${GITHUB_SHA::7}"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="v${PKG_VERSION}-${SHORT_SHA}"
+          fi
+
+          FILE_NAME="eval-any-agent-${VERSION}.tar.gz"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "file_name=${FILE_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Create tar.gz from repository
+        run: |
+          set -eu
+          git archive --format=tar.gz --prefix="Eval-Any-Agent/" --output "${{ steps.vars.outputs.file_name }}" HEAD
+
+      - name: Upload artifact (every push)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.vars.outputs.file_name }}
+          path: ${{ steps.vars.outputs.file_name }}
+          retention-days: 30
+
+      - name: Upload asset to GitHub Release (tag only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.vars.outputs.file_name }}
+          append_body: true
+          body: |
+            手动安装包：`${{ steps.vars.outputs.file_name }}`
+            
+            安装示例：
+            ```bash
+            tar -xzf ${{ steps.vars.outputs.file_name }}
+            cd Eval-Any-Agent
+            ```

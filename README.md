@@ -147,7 +147,7 @@ SQLite 数据保存在命名卷 `app_data`，重建容器不会丢失数据。
 
 ## GitHub + Docker 自动化
 
-本仓库已内置 3 个 GitHub Actions：
+本仓库已内置 5 个 GitHub Actions：
 
 - `.github/workflows/ci-docker.yml`
   - 触发：`pull_request`
@@ -160,6 +160,18 @@ SQLite 数据保存在命名卷 `app_data`，重建容器不会丢失数据。
   - 触发：手动触发（`workflow_dispatch`）
   - 功能：通过 SSH 在远程服务器执行部署/回滚
   - 支持输入 `image_tag`（例如 `latest` 或 `sha-xxxx`）
+- `.github/workflows/package-tar.yml`
+  - 触发：每次 `push`（含分支提交）和 `v*` 标签
+  - 功能：导出 `tar.gz` 手动安装包
+  - 命名规则：
+    - 普通提交：`eval-any-agent-v<package.json版本>-<shortSHA>.tar.gz`
+    - 版本标签：`eval-any-agent-<tag>.tar.gz`
+  - 下载位置：
+    - 所有提交：Actions 运行页面的 Artifacts
+    - `v*` 标签：对应 GitHub Release 的附件资产
+- `.github/workflows/cleanup-artifacts.yml`
+  - 触发：每周一自动执行 + 手动触发
+  - 功能：自动清理旧 tar 包 Artifact，只保留最近 N 个（默认 20）
 
 ### 部署工作流需要的 Secrets
 
@@ -189,3 +201,12 @@ SQLite 数据保存在命名卷 `app_data`，重建容器不会丢失数据。
 2. 拉取指定 tag 镜像
 3. 执行：
    - `APP_IMAGE=<ghcr image:tag> docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml up -d --no-build`
+
+## 手动安装包使用
+
+在下载到 tar 包后：
+
+```bash
+tar -xzf eval-any-agent-*.tar.gz
+cd Eval-Any-Agent
+```
