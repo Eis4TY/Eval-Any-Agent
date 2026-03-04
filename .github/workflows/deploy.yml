@@ -75,4 +75,4 @@ jobs:
             up -d --no-build
 
           docker compose --env-file env/.env.docker ps
-REMOTE
+          REMOTE

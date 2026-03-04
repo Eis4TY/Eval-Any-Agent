@@ -22,7 +22,7 @@ jobs:
         id: vars
         run: |
           set -eu
-          PKG_VERSION="$(node -p \"require('./package.json').version\")"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
           SHORT_SHA="${GITHUB_SHA::7}"
 
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
