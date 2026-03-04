@@ -161,14 +161,14 @@ SQLite 数据保存在命名卷 `app_data`，重建容器不会丢失数据。
   - 功能：通过 SSH 在远程服务器执行部署/回滚
   - 支持输入 `image_tag`（例如 `latest` 或 `sha-xxxx`）
 - `.github/workflows/package-tar.yml`
-  - 触发：每次 `push`（含分支提交）和 `v*` 标签
+  - 触发：每次 `push`（含分支提交）
   - 功能：导出 `tar.gz` 手动安装包
   - 命名规则：
-    - 普通提交：`eval-any-agent-v<package.json版本>-<shortSHA>.tar.gz`
-    - 版本标签：`eval-any-agent-<tag>.tar.gz`
+    - Release 资产文件：`eval-any-agent-nightly.tar.gz`（固定文件名，始终为最新）
+    - Artifact 名称包含版本：`v<package.json版本>-<shortSHA>`
   - 下载位置：
     - 所有提交：Actions 运行页面的 Artifacts
-    - `v*` 标签：对应 GitHub Release 的附件资产
+    - Nightly：固定 `nightly` Release 的附件资产（每次 push 自动更新）
 - `.github/workflows/cleanup-artifacts.yml`
   - 触发：每周一自动执行 + 手动触发
   - 功能：自动清理旧 tar 包 Artifact，只保留最近 N 个（默认 20）
