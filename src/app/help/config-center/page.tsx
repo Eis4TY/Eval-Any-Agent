@@ -12,7 +12,12 @@ import {
 export default function ConfigCenterHelpPage() {
   return (
     <div className="min-h-screen bg-muted/30 p-4 md:p-8">
-      <div className="mx-auto max-w-4xl">
+      <div className="mx-auto max-w-4xl space-y-4">
+        <div>
+          <Button asChild variant="outline">
+            <Link href="/dashboard">← 返回控制台</Link>
+          </Button>
+        </div>
         <Card>
           <CardHeader>
             <CardTitle>配置中心帮助文档</CardTitle>
@@ -35,7 +40,7 @@ export default function ConfigCenterHelpPage() {
                 <AccordionContent className="space-y-2 text-sm leading-6">
                   <p>Header 使用 JSON 格式，例如：</p>
                   <pre className="rounded border bg-muted p-3 text-xs">
-{`{
+                    {`{
   "Content-Type": "application/json",
   "Authorization": "Bearer {{token}}",
   "X-Trace-Id": "{{$string.uuid}}"
@@ -53,7 +58,7 @@ export default function ConfigCenterHelpPage() {
                   <p>- <code>{"{{$date.now}}"}</code>：生成当前 ISO 时间</p>
                   <p>示例：</p>
                   <pre className="rounded border bg-muted p-3 text-xs">
-{`{
+                    {`{
   "requestId": "{{$string.uuid}}",
   "requestTime": "{{$date.now}}",
   "msg": "{{msg}}"
@@ -67,7 +72,7 @@ export default function ConfigCenterHelpPage() {
                 <AccordionContent className="space-y-2 text-sm leading-6">
                   <p>通过 JSONPath 提取返回字段，例如：</p>
                   <pre className="rounded border bg-muted p-3 text-xs">
-{`[
+                    {`[
   { "key": "text", "path": "$.text" },
   { "key": "thinking", "path": "$.thinkcontent" }
 ]`}
@@ -89,12 +94,6 @@ export default function ConfigCenterHelpPage() {
               </AccordionItem>
             </Accordion>
 
-            <Separator />
-            <div className="flex justify-end">
-              <Button asChild>
-                <Link href="/dashboard">返回控制台</Link>
-              </Button>
-            </div>
           </CardContent>
         </Card>
       </div>

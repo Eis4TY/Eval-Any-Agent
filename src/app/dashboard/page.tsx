@@ -113,6 +113,9 @@ export default function DashboardPage() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadName, setUploadName] = useState("");
 
+  const [isCurlDialogOpen, setIsCurlDialogOpen] = useState(false);
+  const [curlInput, setCurlInput] = useState("");
+
   const [editingProfileId, setEditingProfileId] = useState("");
   const [profileName, setProfileName] = useState("默认配置");
   const [upstreamUrl, setUpstreamUrl] = useState("https://dingstest.133.cn/aichate");
@@ -128,6 +131,7 @@ export default function DashboardPage() {
   const [dryRunProfileId, setDryRunProfileId] = useState("");
   const [dryRunDatasetId, setDryRunDatasetId] = useState("");
   const [dryRunResponse, setDryRunResponse] = useState<Record<string, unknown> | null>(null);
+  const [isDryRunning, setIsDryRunning] = useState(false);
 
   const [taskDatasetId, setTaskDatasetId] = useState("");
   const [taskProfileId, setTaskProfileId] = useState("");
@@ -270,6 +274,14 @@ export default function DashboardPage() {
     return () => clearInterval(timer);
   }, [loadLivePreview, previewTaskId]);
 
+  useEffect(() => {
+    if (activeTab !== "tasks") return;
+    const timer = setInterval(() => {
+      loadBase().catch((e) => toast.error(e.message));
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [activeTab, loadBase]);
+
   async function uploadDataset() {
     if (!uploadFile) return;
     const formData = new FormData();
@@ -360,15 +372,118 @@ export default function DashboardPage() {
     await loadBase();
   }
 
+  function handleImportCurl() {
+    if (!curlInput.trim()) {
+      toast.error("请输入 curl 命令");
+      return;
+    }
+
+    const cleanCommand = curlInput.replace(/\\\r?\n/g, ' ');
+    let url = "";
+    let method = "GET";
+    const headers: Record<string, string> = {};
+    let body = "";
+
+    const unquote = (str: string) => {
+      str = str.trim();
+      if ((str.startsWith("'") && str.endsWith("'")) || (str.startsWith('"') && str.endsWith('"'))) {
+        return str.slice(1, -1).replace(/\\"/g, '"').replace(/\\'/g, "'");
+      }
+      return str;
+    };
+
+    const args: string[] = [];
+    let currentWord = "";
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+    let escapeNext = false;
+
+    for (let i = 0; i < cleanCommand.length; i++) {
+      const char = cleanCommand[i];
+      if (escapeNext) {
+        currentWord += char;
+        escapeNext = false;
+        continue;
+      }
+      if (char === '\\' && !inSingleQuote) {
+        escapeNext = true;
+        continue;
+      }
+      if (char === "'" && !inDoubleQuote) {
+        inSingleQuote = !inSingleQuote;
+        currentWord += char;
+        continue;
+      }
+      if (char === '"' && !inSingleQuote) {
+        inDoubleQuote = !inDoubleQuote;
+        currentWord += char;
+        continue;
+      }
+      if (/\s/.test(char) && !inSingleQuote && !inDoubleQuote) {
+        if (currentWord.length > 0) {
+          args.push(currentWord);
+          currentWord = "";
+        }
+      } else {
+        currentWord += char;
+      }
+    }
+    if (currentWord.length > 0) args.push(currentWord);
+
+    for (let i = 0; i < args.length; i++) {
+        const arg = unquote(args[i]);
+        if (arg === "curl") continue;
+        
+        let peek = args[i];
+        if (peek === "-X" || peek === "--request") {
+            method = unquote(args[++i]).toUpperCase();
+        } else if (peek === "-H" || peek === "--header") {
+            const headerLine = unquote(args[++i]);
+            const splitIdx = headerLine.indexOf(':');
+            if (splitIdx > -1) {
+                headers[headerLine.slice(0, splitIdx).trim()] = headerLine.slice(splitIdx + 1).trim();
+            }
+        } else if (peek === "-d" || peek === "--data" || peek === "--data-raw" || peek === "--data-binary" || peek === "--data-urlencode") {
+            body = unquote(args[++i] || "");
+            if (method === "GET") method = "POST";
+        } else if (arg.startsWith("http://") || arg.startsWith("https://")) {
+            url = arg;
+        }
+    }
+
+    if (url) setUpstreamUrl(url);
+    if (Object.keys(headers).length > 0) {
+        setHeaderConfig(JSON.stringify(headers, null, 2));
+    }
+    if (body) {
+        try {
+            setRequestTemplate(JSON.stringify(JSON.parse(body), null, 2));
+        } catch {
+            setRequestTemplate(body);
+        }
+    }
+
+    setIsCurlDialogOpen(false);
+    setCurlInput("");
+    toast.success("Curl 解析成功，配置已填充");
+  }
+
   async function dryRun() {
-    if (!dryRunProfileId || !dryRunDatasetId) return;
-    const data = await api<Record<string, unknown>>(`/api/profiles/${dryRunProfileId}/dry-run`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ datasetId: dryRunDatasetId }),
-    });
-    setDryRunResponse(data);
-    toast.success("Dry Run 完成");
+    if (!dryRunProfileId || !dryRunDatasetId || isDryRunning) return;
+    setIsDryRunning(true);
+    try {
+      const data = await api<Record<string, unknown>>(`/api/profiles/${dryRunProfileId}/dry-run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ datasetId: dryRunDatasetId }),
+      });
+      setDryRunResponse(data);
+      toast.success("Dry Run 完成");
+    } catch (e: any) {
+      toast.error(e.message || "Dry Run 失败");
+    } finally {
+      setIsDryRunning(false);
+    }
   }
 
   async function createTask() {
@@ -401,7 +516,10 @@ export default function DashboardPage() {
     await api(`/api/tasks/${taskId}`, { method: "DELETE" });
     toast.success("任务已删除");
     if (resultTaskId === taskId) setResultTaskId("");
-    if (previewTaskId === taskId) setPreviewTaskId("");
+    if (previewTaskId === taskId) {
+      setPreviewTaskId("");
+      setLiveRows([]);
+    }
     await loadBase();
   }
 
@@ -539,9 +657,12 @@ export default function DashboardPage() {
                     <CardTitle>映射配置中心</CardTitle>
                     <CardDescription>请求模板、Header、字段绑定、提取规则、结束信号规则</CardDescription>
                   </div>
-                  <Button asChild variant="outline" size="icon" aria-label="配置帮助">
-                    <Link href="/help/config-center">?</Link>
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setIsCurlDialogOpen(true)}>解析 Curl</Button>
+                    <Button asChild variant="outline" size="icon" aria-label="配置帮助">
+                      <Link href="/help/config-center" target="_blank" rel="noopener noreferrer">?</Link>
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -629,6 +750,26 @@ export default function DashboardPage() {
                   </AccordionItem>
                 </Accordion>
 
+                <Dialog open={isCurlDialogOpen} onOpenChange={setIsCurlDialogOpen}>
+                  <DialogContent className="max-w-2xl">
+                    <DialogHeader>
+                      <DialogTitle>从 Curl 导入配置</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4 overflow-hidden w-full">
+                      <Textarea 
+                        placeholder="在此粘贴 curl 命令..." 
+                        className="h-64 w-full font-mono text-xs focus-visible:ring-0 focus-visible:border-ring resize-none break-all" 
+                        value={curlInput} 
+                        onChange={(e) => setCurlInput(e.target.value)} 
+                      />
+                      <div className="flex justify-end gap-2">
+                        <Button variant="outline" onClick={() => setIsCurlDialogOpen(false)}>取消</Button>
+                        <Button onClick={handleImportCurl}>解析并填充</Button>
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+
                 <div className="flex items-center gap-2">
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -708,21 +849,44 @@ export default function DashboardPage() {
                       {profiles.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  <Button onClick={dryRun}>发送测试</Button>
+                  <Button onClick={dryRun} disabled={isDryRunning}>
+                    {isDryRunning ? "正在请求..." : "发送测试"}
+                  </Button>
                 </div>
 
                 {dryRunResponse ? (
                   <Alert>
-                    <AlertTitle>Dry Run 结果</AlertTitle>
-                    <AlertDescription>
-                      endReason: {String(dryRunResponse.endReason)} / ruleHit: {String(dryRunResponse.ruleHit)}
+                    <AlertTitle>Dry Run 结果摘要</AlertTitle>
+                    <AlertDescription className="mt-2 space-y-1">
+                      <div><span className="font-semibold">TTFT:</span> {dryRunResponse.ttftMs != null ? String(dryRunResponse.ttftMs) : "-"} ms | <span className="font-semibold">耗时:</span> {dryRunResponse.latencyMs != null ? String(dryRunResponse.latencyMs) : "-"} ms</div>
+                      <div><span className="font-semibold">结束原因:</span> {String(dryRunResponse.endReason)} {dryRunResponse.ruleHit ? `(命中: ${String(dryRunResponse.ruleHit)})` : ""}</div>
                     </AlertDescription>
                   </Alert>
                 ) : null}
 
-                <ScrollArea className="h-80 rounded border p-3">
-                  <pre className="text-xs">{dryRunResponse ? JSON.stringify(dryRunResponse, null, 2) : "暂无结果"}</pre>
-                </ScrollArea>
+                {dryRunResponse && (
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                       <div className="text-sm font-medium">请求 Payload (发送给上游)</div>
+                       <ScrollArea className="h-64 w-full rounded border p-3 bg-muted/50">
+                          <pre className="text-xs whitespace-pre-wrap break-all">{JSON.stringify(dryRunResponse.requestPayload, null, 2)}</pre>
+                       </ScrollArea>
+                    </div>
+                    <div className="space-y-2">
+                       <div className="text-sm font-medium">提取结果 (Outputs)</div>
+                       <ScrollArea className="h-64 w-full rounded border p-3 bg-muted/50">
+                          <pre className="text-xs whitespace-pre-wrap break-all">{JSON.stringify(dryRunResponse.outputs, null, 2)}</pre>
+                       </ScrollArea>
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">完整结果详情</div>
+                  <ScrollArea className="h-80 w-full rounded border p-3 bg-card">
+                    <pre className="text-xs whitespace-pre-wrap break-all">{dryRunResponse ? JSON.stringify(dryRunResponse, null, 2) : "暂无结果"}</pre>
+                  </ScrollArea>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
