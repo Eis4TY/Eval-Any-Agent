@@ -40,7 +40,7 @@ export default function LoginPage() {
       return;
     }
 
-    window.location.href = "/dashboard";
+    router.replace("/dashboard");
   }
 
   return (
