@@ -104,6 +104,14 @@ function getReplyPreview(outputs: Record<string, unknown>) {
   return "-";
 }
 
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+
+  const pad = (num: number) => String(num).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState("datasets");
   const [datasets, setDatasets] = useState<Dataset[]>([]);
@@ -372,6 +380,14 @@ export default function DashboardPage() {
     await loadBase();
   }
 
+  async function duplicateProfile(profileId: string) {
+    const duplicated = await api<Profile>(`/api/profiles/${profileId}/duplicate`, { method: "POST" });
+    const duplicatedProfile = await api<Profile>(`/api/profiles/${duplicated.id}`);
+    editProfile(duplicatedProfile);
+    toast.success(`已创建副本：${duplicated.name}`);
+    await loadBase();
+  }
+
   function handleImportCurl() {
     if (!curlInput.trim()) {
       toast.error("请输入 curl 命令");
@@ -434,7 +450,7 @@ export default function DashboardPage() {
         const arg = unquote(args[i]);
         if (arg === "curl") continue;
         
-        let peek = args[i];
+        const peek = args[i];
         if (peek === "-X" || peek === "--request") {
             method = unquote(args[++i]).toUpperCase();
         } else if (peek === "-H" || peek === "--header") {
@@ -479,8 +495,8 @@ export default function DashboardPage() {
       });
       setDryRunResponse(data);
       toast.success("Dry Run 完成");
-    } catch (e: any) {
-      toast.error(e.message || "Dry Run 失败");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Dry Run 失败");
     } finally {
       setIsDryRunning(false);
     }
@@ -803,6 +819,7 @@ export default function DashboardPage() {
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <Button size="sm" variant="outline" onClick={() => editProfile(profile)}>修改</Button>
+                              <Button size="sm" variant="outline" onClick={() => duplicateProfile(profile.id)}>创建副本</Button>
                               <AlertDialog>
                                 <AlertDialogTrigger asChild>
                                   <Button size="sm" variant="destructive">删除</Button>
@@ -934,6 +951,7 @@ export default function DashboardPage() {
                     <TableRow>
                       <TableHead>任务ID</TableHead>
                       <TableHead>数据集/配置</TableHead>
+                      <TableHead>创建时间</TableHead>
                       <TableHead>状态</TableHead>
                       <TableHead>进度</TableHead>
                       <TableHead>操作</TableHead>
@@ -942,61 +960,65 @@ export default function DashboardPage() {
                   <TableBody>
                     {tasks.map((task) => {
                       const pct = Math.min(100, Math.round(((task.successRows + task.failedRows) / Math.max(1, task.totalRows)) * 100));
+                      const isFinished = task.status === "completed" || task.status === "stopped";
                       return (
                         <TableRow key={task.id}>
                           <TableCell className="font-mono text-xs">{task.id.slice(0, 12)}</TableCell>
                           <TableCell>{task.dataset.name} / {task.profile.name}</TableCell>
+                          <TableCell className="whitespace-nowrap">{formatDateTime(task.createdAt)}</TableCell>
                           <TableCell><Badge>{task.status}</Badge></TableCell>
                           <TableCell className="w-[220px]"><Progress value={pct} /></TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <Button variant="outline" size="sm">控制</Button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent>
-                                  <DropdownMenuItem onClick={() => controlTask(task.id, "pause")}>暂停</DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => controlTask(task.id, "resume")}>继续</DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
+                              {!isFinished ? (
+                                <>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="outline" size="sm">控制</Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent>
+                                      <DropdownMenuItem onClick={() => controlTask(task.id, "pause")}>暂停</DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => controlTask(task.id, "resume")}>继续</DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
 
-                              <Button size="sm" variant="outline" onClick={() => jumpToTaskResults(task.id)}>导出</Button>
-
-                              {task.status === "stopped" ? (
-                                <Button variant="secondary" size="sm" disabled>终止</Button>
+                                  <AlertDialog>
+                                    <AlertDialogTrigger asChild>
+                                      <Button variant="destructive" size="sm">终止</Button>
+                                    </AlertDialogTrigger>
+                                    <AlertDialogContent>
+                                      <AlertDialogHeader>
+                                        <AlertDialogTitle>确认终止任务？</AlertDialogTitle>
+                                        <AlertDialogDescription>终止后任务将不会继续处理剩余行。</AlertDialogDescription>
+                                      </AlertDialogHeader>
+                                      <AlertDialogFooter>
+                                        <AlertDialogCancel>取消</AlertDialogCancel>
+                                        <AlertDialogAction onClick={() => controlTask(task.id, "stop")}>确认终止</AlertDialogAction>
+                                      </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                  </AlertDialog>
+                                </>
                               ) : (
-                                <AlertDialog>
-                                  <AlertDialogTrigger asChild>
-                                    <Button variant="destructive" size="sm">终止</Button>
-                                  </AlertDialogTrigger>
-                                  <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                      <AlertDialogTitle>确认终止任务？</AlertDialogTitle>
-                                      <AlertDialogDescription>终止后任务将不会继续处理剩余行。</AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                      <AlertDialogCancel>取消</AlertDialogCancel>
-                                      <AlertDialogAction onClick={() => controlTask(task.id, "stop")}>确认终止</AlertDialogAction>
-                                    </AlertDialogFooter>
-                                  </AlertDialogContent>
-                                </AlertDialog>
-                              )}
+                                <>
+                                  <Button size="sm" variant="outline" onClick={() => jumpToTaskResults(task.id)}>导出</Button>
 
-                              <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                  <Button variant="outline" size="sm">删除</Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                  <AlertDialogHeader>
-                                    <AlertDialogTitle>确认删除任务？</AlertDialogTitle>
-                                    <AlertDialogDescription>删除后该任务结果会从数据库中同步清除。</AlertDialogDescription>
-                                  </AlertDialogHeader>
-                                  <AlertDialogFooter>
-                                    <AlertDialogCancel>取消</AlertDialogCancel>
-                                    <AlertDialogAction onClick={() => deleteTask(task.id)}>确认删除</AlertDialogAction>
-                                  </AlertDialogFooter>
-                                </AlertDialogContent>
-                              </AlertDialog>
+                                  <AlertDialog>
+                                    <AlertDialogTrigger asChild>
+                                      <Button variant="outline" size="sm">删除</Button>
+                                    </AlertDialogTrigger>
+                                    <AlertDialogContent>
+                                      <AlertDialogHeader>
+                                        <AlertDialogTitle>确认删除任务？</AlertDialogTitle>
+                                        <AlertDialogDescription>删除后该任务结果会从数据库中同步清除。</AlertDialogDescription>
+                                      </AlertDialogHeader>
+                                      <AlertDialogFooter>
+                                        <AlertDialogCancel>取消</AlertDialogCancel>
+                                        <AlertDialogAction onClick={() => deleteTask(task.id)}>确认删除</AlertDialogAction>
+                                      </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                  </AlertDialog>
+                                </>
+                              )}
                             </div>
                           </TableCell>
                         </TableRow>
