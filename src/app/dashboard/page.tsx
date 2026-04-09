@@ -12,7 +12,6 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -380,6 +379,26 @@ export default function DashboardPage() {
     await loadBase();
   }
 
+  function formatProfileJsonFields() {
+    const formatters = [
+      { label: "请求体模板", value: requestTemplate, setter: setRequestTemplate },
+      { label: "Header 配置", value: headerConfig, setter: setHeaderConfig },
+      { label: "输入绑定", value: inputBindings, setter: setInputBindings },
+      { label: "提取规则", value: extractRules, setter: setExtractRules },
+      { label: "结束信号规则", value: doneRules, setter: setDoneRules },
+    ];
+
+    try {
+      for (const item of formatters) {
+        item.setter(JSON.stringify(JSON.parse(item.value), null, 2));
+      }
+      toast.success("JSON 已格式化");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "JSON 格式化失败";
+      toast.error(message);
+    }
+  }
+
   async function duplicateProfile(profileId: string) {
     const duplicated = await api<Profile>(`/api/profiles/${profileId}/duplicate`, { method: "POST" });
     const duplicatedProfile = await api<Profile>(`/api/profiles/${duplicated.id}`);
@@ -687,54 +706,53 @@ export default function DashboardPage() {
                   <Input value={upstreamUrl} onChange={(e) => setUpstreamUrl(e.target.value)} placeholder="上游 API URL" />
                 </div>
 
-                <Accordion type="multiple" defaultValue={["template", "extract", "done"]}>
-                  <AccordionItem value="template">
-                    <AccordionTrigger>请求模板、Header 与绑定</AccordionTrigger>
-                    <AccordionContent className="space-y-3 overflow-visible">
-                      <div className="space-y-2">
-                        <div className="text-sm font-medium">请求体模板（JSON）</div>
-                        <Textarea
-                          className="focus-visible:ring-0 focus-visible:border-ring"
-                          value={requestTemplate}
-                          onChange={(e) => setRequestTemplate(e.target.value)}
-                          rows={8}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <div className="text-sm font-medium">Header 配置（JSON）</div>
-                        <Textarea
-                          className="focus-visible:ring-0 focus-visible:border-ring"
-                          value={headerConfig}
-                          onChange={(e) => setHeaderConfig(e.target.value)}
-                          rows={5}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <div className="text-sm font-medium">输入绑定 input_bindings（JSON）</div>
-                        <Textarea
-                          className="focus-visible:ring-0 focus-visible:border-ring"
-                          value={inputBindings}
-                          onChange={(e) => setInputBindings(e.target.value)}
-                          rows={4}
-                        />
-                      </div>
-                    </AccordionContent>
-                  </AccordionItem>
-                  <AccordionItem value="extract">
-                    <AccordionTrigger>提取规则 extract_rules</AccordionTrigger>
-                    <AccordionContent className="overflow-visible">
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+                  <div className="space-y-4 rounded-lg border p-4">
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">输入绑定 input_bindings（JSON）</div>
+                      <Textarea
+                        className="focus-visible:ring-0 focus-visible:border-ring"
+                        value={inputBindings}
+                        onChange={(e) => setInputBindings(e.target.value)}
+                        rows={10}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Header 配置（JSON）</div>
+                      <Textarea
+                        className="focus-visible:ring-0 focus-visible:border-ring"
+                        value={headerConfig}
+                        onChange={(e) => setHeaderConfig(e.target.value)}
+                        rows={10}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 rounded-lg border p-4">
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">请求体模板（JSON）</div>
+                      <Textarea
+                        className="focus-visible:ring-0 focus-visible:border-ring"
+                        value={requestTemplate}
+                        onChange={(e) => setRequestTemplate(e.target.value)}
+                        rows={28}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 rounded-lg border p-4">
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">提取规则 extract_rules</div>
                       <Textarea
                         className="focus-visible:ring-0 focus-visible:border-ring"
                         value={extractRules}
                         onChange={(e) => setExtractRules(e.target.value)}
-                        rows={6}
+                        rows={10}
                       />
-                    </AccordionContent>
-                  </AccordionItem>
-                  <AccordionItem value="done">
-                    <AccordionTrigger>结束信号规则 done_rules</AccordionTrigger>
-                    <AccordionContent className="space-y-3 overflow-visible">
-                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    </div>
+                    <div className="space-y-3">
+                      <div className="text-sm font-medium">结束信号规则 done_rules</div>
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
                         <Select value={streamProtocol} onValueChange={(v) => setStreamProtocol(v as typeof streamProtocol)}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
@@ -756,15 +774,15 @@ export default function DashboardPage() {
                         className="focus-visible:ring-0 focus-visible:border-ring"
                         value={doneRules}
                         onChange={(e) => setDoneRules(e.target.value)}
-                        rows={6}
+                        rows={10}
                       />
                       <div className="flex items-center gap-2">
                         <Checkbox checked={doneRequired} onCheckedChange={(v) => setDoneRequired(Boolean(v))} id="done-required" />
                         <label htmlFor="done-required" className="text-sm">done_required（未命中规则时标记 END_SIGNAL_MISSING）</label>
                       </div>
-                    </AccordionContent>
-                  </AccordionItem>
-                </Accordion>
+                    </div>
+                  </div>
+                </div>
 
                 <Dialog open={isCurlDialogOpen} onOpenChange={setIsCurlDialogOpen}>
                   <DialogContent className="max-w-2xl">
@@ -787,6 +805,7 @@ export default function DashboardPage() {
                 </Dialog>
 
                 <div className="flex items-center gap-2">
+                  <Button variant="outline" onClick={formatProfileJsonFields}>格式化</Button>
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button onClick={saveProfile}>{editingProfileId ? "更新配置" : "保存配置"}</Button>
@@ -806,7 +825,6 @@ export default function DashboardPage() {
                       <TableRow>
                         <TableHead>名称</TableHead>
                         <TableHead>URL</TableHead>
-                        <TableHead>策略</TableHead>
                         <TableHead>操作</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -815,7 +833,6 @@ export default function DashboardPage() {
                         <TableRow key={profile.id}>
                           <TableCell>{profile.name}</TableCell>
                           <TableCell className="max-w-[360px] truncate">{profile.upstreamUrl}</TableCell>
-                          <TableCell>{profile.doneStrategy} / {profile.streamProtocol}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <Button size="sm" variant="outline" onClick={() => editProfile(profile)}>修改</Button>
@@ -1095,10 +1112,10 @@ export default function DashboardPage() {
                   <Button variant="outline" onClick={loadResults}>刷新</Button>
                 </div>
 
-                <div className="grid grid-cols-1 gap-4 rounded-md border p-3 md:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 rounded-md border p-3 md:grid-cols-2 md:min-h-[24rem]">
                   <div className="space-y-2">
                     <div className="text-sm font-medium">可选导出列</div>
-                    <ScrollArea className="h-48 rounded border">
+                    <ScrollArea className="h-96 rounded border">
                       <div className="space-y-1 p-2">
                         {availableExportColumns.map((column) => (
                           <div key={column} className="flex items-center justify-between gap-2 rounded border p-2">
@@ -1118,7 +1135,7 @@ export default function DashboardPage() {
                   </div>
                   <div className="space-y-2">
                     <div className="text-sm font-medium">已选导出列（按顺序导出）</div>
-                    <ScrollArea className="h-48 rounded border">
+                    <ScrollArea className="h-96 rounded border">
                       <div className="space-y-1 p-2">
                         {selectedExportColumns.map((column, index) => (
                           <div key={`${column}-${index}`} className="flex items-center justify-between gap-2 rounded border p-2">
