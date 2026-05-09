@@ -14,9 +14,12 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  datasets Dataset[]
-  profiles MappingProfile[]
-  tasks    EvalTask[]
+  datasets        Dataset[]
+  profiles        MappingProfile[]
+  tasks           EvalTask[]
+  llmProviders    LlmProviderConfig[]
+  evaluators      Evaluator[]
+  evaluationTasks EvaluationTask[]
 }
 
 model Dataset {
@@ -83,10 +86,11 @@ model EvalTask {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  dataset Dataset        @relation(fields: [datasetId], references: [id], onDelete: Cascade)
-  profile MappingProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  results EvalResult[]
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dataset         Dataset           @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  profile         MappingProfile    @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  results         EvalResult[]
+  evaluationTasks EvaluationTask[]
 
   @@index([userId])
   @@index([datasetId])
@@ -110,8 +114,99 @@ model EvalResult {
   rawTrace            String?
   createdAt           DateTime @default(now())
 
-  task EvalTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task              EvalTask            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  evaluationResults EvaluationResult[]
 
   @@index([taskId])
+  @@index([rowIndex])
+}
+
+model LlmProviderConfig {
+  id           String   @id @default(cuid())
+  userId       String
+  name         String
+  providerType String   @default("openai_compatible")
+  baseUrl      String
+  apiKeyEncrypted String
+  defaultModel String
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  evaluators Evaluator[]
+
+  @@index([userId])
+}
+
+model Evaluator {
+  id                 String   @id @default(cuid())
+  userId             String
+  providerConfigId   String
+  name               String
+  model              String
+  systemPrompt       String
+  userPromptTemplate String
+  scoreMin           Float    @default(0)
+  scoreMax           Float    @default(100)
+  passThreshold      Float    @default(60)
+  enabled            Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  providerConfig    LlmProviderConfig @relation(fields: [providerConfigId], references: [id], onDelete: Cascade)
+  evaluationTasks   EvaluationTask[]
+
+  @@index([userId])
+  @@index([providerConfigId])
+}
+
+model EvaluationTask {
+  id          String   @id @default(cuid())
+  userId      String
+  sourceTaskId String
+  evaluatorId String
+  status      String
+  totalRows   Int
+  successRows Int      @default(0)
+  failedRows  Int      @default(0)
+  skippedRows Int      @default(0)
+  avgScore    Float?
+  startedAt   DateTime?
+  endedAt     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceTask    EvalTask           @relation(fields: [sourceTaskId], references: [id], onDelete: Cascade)
+  evaluator    Evaluator          @relation(fields: [evaluatorId], references: [id], onDelete: Cascade)
+  results      EvaluationResult[]
+
+  @@index([userId])
+  @@index([sourceTaskId])
+  @@index([evaluatorId])
+}
+
+model EvaluationResult {
+  id               String   @id @default(cuid())
+  evaluationTaskId String
+  sourceResultId   String
+  rowIndex         Int
+  score            Float?
+  passed           Boolean?
+  reason           String?
+  status           String
+  errorType        String?
+  errorMessage     String?
+  promptSnapshot   String
+  rawResponse      String?
+  createdAt        DateTime @default(now())
+
+  evaluationTask EvaluationTask @relation(fields: [evaluationTaskId], references: [id], onDelete: Cascade)
+  sourceResult    EvalResult     @relation(fields: [sourceResultId], references: [id], onDelete: Cascade)
+
+  @@index([evaluationTaskId])
+  @@index([sourceResultId])
   @@index([rowIndex])
 }

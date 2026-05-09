@@ -23,7 +23,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const form = useForm<FormValue>({
     resolver: zodResolver(schema),
-    defaultValues: { username: "admin", password: "admin" },
+    defaultValues: { username: "", password: "" },
   });
 
   async function onSubmit(values: FormValue) {
@@ -79,7 +79,7 @@ export default function LoginPage() {
                   <FormItem>
                     <FormLabel>密码</FormLabel>
                     <FormControl>
-                      <Input type="password" placeholder="admin" {...field} />
+                      <Input type="password" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
