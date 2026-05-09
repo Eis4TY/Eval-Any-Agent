@@ -88,6 +88,80 @@ CREATE TABLE "EvalResult" (
     CONSTRAINT "EvalResult_taskId_fkey" FOREIGN KEY ("taskId") REFERENCES "EvalTask" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
+-- CreateTable
+CREATE TABLE "LlmProviderConfig" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "providerType" TEXT NOT NULL DEFAULT 'openai_compatible',
+    "baseUrl" TEXT NOT NULL,
+    "apiKeyEncrypted" TEXT NOT NULL,
+    "defaultModel" TEXT NOT NULL,
+    "enabled" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "LlmProviderConfig_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "Evaluator" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "providerConfigId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "model" TEXT NOT NULL,
+    "systemPrompt" TEXT NOT NULL,
+    "userPromptTemplate" TEXT NOT NULL,
+    "scoreMin" REAL NOT NULL DEFAULT 0,
+    "scoreMax" REAL NOT NULL DEFAULT 100,
+    "passThreshold" REAL NOT NULL DEFAULT 60,
+    "enabled" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "Evaluator_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "Evaluator_providerConfigId_fkey" FOREIGN KEY ("providerConfigId") REFERENCES "LlmProviderConfig" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "EvaluationTask" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "sourceTaskId" TEXT NOT NULL,
+    "evaluatorId" TEXT NOT NULL,
+    "status" TEXT NOT NULL,
+    "totalRows" INTEGER NOT NULL,
+    "successRows" INTEGER NOT NULL DEFAULT 0,
+    "failedRows" INTEGER NOT NULL DEFAULT 0,
+    "skippedRows" INTEGER NOT NULL DEFAULT 0,
+    "avgScore" REAL,
+    "startedAt" DATETIME,
+    "endedAt" DATETIME,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "EvaluationTask_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "EvaluationTask_sourceTaskId_fkey" FOREIGN KEY ("sourceTaskId") REFERENCES "EvalTask" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "EvaluationTask_evaluatorId_fkey" FOREIGN KEY ("evaluatorId") REFERENCES "Evaluator" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+-- CreateTable
+CREATE TABLE "EvaluationResult" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "evaluationTaskId" TEXT NOT NULL,
+    "sourceResultId" TEXT NOT NULL,
+    "rowIndex" INTEGER NOT NULL,
+    "score" REAL,
+    "passed" BOOLEAN,
+    "reason" TEXT,
+    "status" TEXT NOT NULL,
+    "errorType" TEXT,
+    "errorMessage" TEXT,
+    "promptSnapshot" TEXT NOT NULL,
+    "rawResponse" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "EvaluationResult_evaluationTaskId_fkey" FOREIGN KEY ("evaluationTaskId") REFERENCES "EvaluationTask" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "EvaluationResult_sourceResultId_fkey" FOREIGN KEY ("sourceResultId") REFERENCES "EvalResult" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "User_username_key" ON "User"("username");
 
@@ -114,4 +188,31 @@ CREATE INDEX "EvalResult_taskId_idx" ON "EvalResult"("taskId");
 
 -- CreateIndex
 CREATE INDEX "EvalResult_rowIndex_idx" ON "EvalResult"("rowIndex");
+
+-- CreateIndex
+CREATE INDEX "LlmProviderConfig_userId_idx" ON "LlmProviderConfig"("userId");
+
+-- CreateIndex
+CREATE INDEX "Evaluator_userId_idx" ON "Evaluator"("userId");
+
+-- CreateIndex
+CREATE INDEX "Evaluator_providerConfigId_idx" ON "Evaluator"("providerConfigId");
+
+-- CreateIndex
+CREATE INDEX "EvaluationTask_userId_idx" ON "EvaluationTask"("userId");
+
+-- CreateIndex
+CREATE INDEX "EvaluationTask_sourceTaskId_idx" ON "EvaluationTask"("sourceTaskId");
+
+-- CreateIndex
+CREATE INDEX "EvaluationTask_evaluatorId_idx" ON "EvaluationTask"("evaluatorId");
+
+-- CreateIndex
+CREATE INDEX "EvaluationResult_evaluationTaskId_idx" ON "EvaluationResult"("evaluationTaskId");
+
+-- CreateIndex
+CREATE INDEX "EvaluationResult_sourceResultId_idx" ON "EvaluationResult"("sourceResultId");
+
+-- CreateIndex
+CREATE INDEX "EvaluationResult_rowIndex_idx" ON "EvaluationResult"("rowIndex");
 
