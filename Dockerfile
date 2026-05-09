@@ -7,7 +7,7 @@ WORKDIR /app
 ENV PRISMA_SKIP_POSTINSTALL_GENERATE=1
 RUN npm config set registry https://mirrors.tuna.tsinghua.edu.cn/npm/
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci || (rm -rf node_modules && npm config set registry https://registry.npmmirror.com && npm ci)
 
 FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-bookworm-slim AS builder
 WORKDIR /app
@@ -30,7 +30,7 @@ RUN apt-get update \
 
 RUN npm config set registry https://mirrors.tuna.tsinghua.edu.cn/npm/
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev || (rm -rf node_modules && npm config set registry https://registry.npmmirror.com && npm ci --omit=dev)
 
 COPY prisma ./prisma
 RUN npm run db:generate
