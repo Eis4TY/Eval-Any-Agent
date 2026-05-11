@@ -1,5 +1,7 @@
 # Eval-Any-Agent 私有化部署与使用指南
 
+[中文](./README.md) | [English](./README.en.md)
+
 ![Eval-Any-Agent 截图](./CleanShot.png)
 
 Eval-Any-Agent 是一个面向企业内网和私有环境的 LLM 批量评测平台。你可以上传 CSV/XLSX 数据集，配置待测接口的请求模板，批量调用上游 Agent/模型服务，记录响应、延迟、结束信号和错误信息，并可进一步使用 LLM 评估器对结果打分，最后导出 CSV/XLSX 报告。
