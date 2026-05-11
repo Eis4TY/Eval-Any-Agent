@@ -57,20 +57,27 @@ Eval-Any-Agent 是一个面向企业内网和私有环境的 LLM 批量评测平
 
 ## 一键部署流程
 
-### 1. 获取代码或安装包
+### 1. 获取 Docker 部署包
 
-如果直接从源码部署：
+推荐普通部署用户在 GitHub Release 页面下载 Docker 部署包：
 
-```bash
-git clone <your-repo-url>
-cd Eval-Any-Agent
+```text
+eval-any-agent-docker-nightly.tar.gz
 ```
 
-如果使用发布的 tar.gz 安装包：
+解压：
 
 ```bash
-tar -xzf eval-any-agent-*.tar.gz
-cd Eval-Any-Agent
+tar -xzf eval-any-agent-docker-nightly.tar.gz
+cd Eval-Any-Agent-Docker
+```
+
+该部署包只包含 Docker Compose 和 Nginx 配置，会从 GHCR 拉取预构建镜像，不包含源码、真实环境变量或证书文件。
+
+如果需要源码安装包，可下载：
+
+```text
+eval-any-agent-nightly.tar.gz
 ```
 
 ### 2. 准备环境变量
@@ -83,6 +90,7 @@ cp env/.env.docker.example env/.env.docker
 
 ```dotenv
 NODE_ENV=production
+APP_IMAGE=ghcr.io/eis4ty/eval-any-agent:latest
 AUTH_SECRET=please-change-this-to-a-long-random-string
 DEFAULT_ADMIN_USERNAME=admin
 DEFAULT_ADMIN_PASSWORD=change-this-password
@@ -100,6 +108,7 @@ NGINX_HTTPS_PORT=18443
 按需修改：
 
 - `DEFAULT_ADMIN_USERNAME`：默认管理员用户名
+- `APP_IMAGE`：默认拉取 `ghcr.io/eis4ty/eval-any-agent:latest`
 - `NGINX_HTTP_PORT`：宿主机 HTTP 端口
 - `NGINX_HTTPS_PORT`：宿主机 HTTPS 端口
 
@@ -126,26 +135,33 @@ openssl req -x509 -nodes -days 365 \
 
 生产环境请使用受信任 CA 证书，避免浏览器拦截或接口调用方不信任证书。
 
-### 4. 构建并启动
+### 4. 启动服务
 
-项目 Dockerfile 已配置 npm 清华源。首次部署执行：
+Docker 部署包默认拉取 GHCR 预构建镜像。首次部署执行：
 
 ```bash
-docker compose --env-file env/.env.docker up -d --build
+docker compose \
+  --env-file env/.env.docker \
+  -f docker-compose.yml \
+  -f docker-compose.deploy.yml \
+  up -d
 ```
 
-如果需要显式构建 `linux/amd64` 镜像：
+如果不想把 `APP_IMAGE` 写入 `env/.env.docker`，也可以临时传入：
 
 ```bash
-docker buildx build --platform linux/amd64 -t eval-any-agent:amd64 . --load
-docker compose --env-file env/.env.docker up -d
+APP_IMAGE=ghcr.io/eis4ty/eval-any-agent:latest docker compose \
+  --env-file env/.env.docker \
+  -f docker-compose.yml \
+  -f docker-compose.deploy.yml \
+  up -d
 ```
 
 ### 5. 检查服务状态
 
 ```bash
-docker compose --env-file env/.env.docker ps
-docker compose --env-file env/.env.docker logs -f app
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml ps
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml logs -f app
 ```
 
 首次启动时，`app` 日志中应看到数据库初始化和默认管理员创建信息。
@@ -167,23 +183,23 @@ https://<服务器IP或域名>:18443/login
 
 ## 升级与重启
 
-源码部署升级：
+Docker 部署包升级：
 
 ```bash
-git pull
-docker compose --env-file env/.env.docker up -d --build
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml pull
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml up -d
 ```
 
 重启服务：
 
 ```bash
-docker compose --env-file env/.env.docker restart
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml restart
 ```
 
 停止服务：
 
 ```bash
-docker compose --env-file env/.env.docker down
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml down
 ```
 
 停止服务不会删除 SQLite 数据。不要随意执行 `docker volume rm`，否则可能删除评测数据。
@@ -199,19 +215,19 @@ docker volume ls | grep app_data
 备份 SQLite 数据库：
 
 ```bash
-docker compose --env-file env/.env.docker exec app sh -c 'sqlite3 /app/data/dev.db ".backup /app/data/backup.db"'
-docker cp "$(docker compose --env-file env/.env.docker ps -q app)":/app/data/backup.db ./backup.db
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml exec app sh -c 'sqlite3 /app/data/dev.db ".backup /app/data/backup.db"'
+docker cp "$(docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml ps -q app)":/app/data/backup.db ./backup.db
 ```
 
 恢复前请先停止服务并确认当前数据可覆盖。以下命令中的 `VOLUME_NAME` 请替换为上一步查到的卷名：
 
 ```bash
-docker compose --env-file env/.env.docker down
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml down
 docker run --rm \
   -v VOLUME_NAME:/data \
   -v "$PWD":/backup \
   busybox sh -c 'cp /backup/backup.db /data/dev.db'
-docker compose --env-file env/.env.docker up -d
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml up -d
 ```
 
 ## 使用流程总览
@@ -575,32 +591,33 @@ http://localhost:3000/login
 查看容器：
 
 ```bash
-docker compose --env-file env/.env.docker ps
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml ps
 ```
 
 查看日志：
 
 ```bash
-docker compose --env-file env/.env.docker logs -f app
-docker compose --env-file env/.env.docker logs -f nginx
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml logs -f app
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml logs -f nginx
 ```
 
 重启：
 
 ```bash
-docker compose --env-file env/.env.docker restart
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml restart
 ```
 
-更新镜像并重建：
+更新镜像：
 
 ```bash
-docker compose --env-file env/.env.docker up -d --build
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml pull
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml up -d
 ```
 
 进入应用容器：
 
 ```bash
-docker compose --env-file env/.env.docker exec app sh
+docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml exec app sh
 ```
 
 ## GitHub Actions 自动化部署

@@ -23,22 +23,42 @@ jobs:
           PKG_VERSION="$(node -p "require('./package.json').version")"
           SHORT_SHA="${GITHUB_SHA::7}"
           VERSION="v${PKG_VERSION}-${SHORT_SHA}"
-          FILE_NAME="eval-any-agent-nightly.tar.gz"
-          ARTIFACT_NAME="eval-any-agent-${VERSION}.tar.gz"
+          SOURCE_FILE_NAME="eval-any-agent-nightly.tar.gz"
+          DOCKER_FILE_NAME="eval-any-agent-docker-nightly.tar.gz"
+          ARTIFACT_NAME="eval-any-agent-${VERSION}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "file_name=${FILE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "source_file_name=${SOURCE_FILE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "docker_file_name=${DOCKER_FILE_NAME}" >> "$GITHUB_OUTPUT"
           echo "artifact_name=${ARTIFACT_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Create tar.gz from repository
         run: |
           set -eu
-          git archive --format=tar.gz --prefix="Eval-Any-Agent/" --output "${{ steps.vars.outputs.file_name }}" HEAD
+          git archive --format=tar.gz --prefix="Eval-Any-Agent/" --output "${{ steps.vars.outputs.source_file_name }}" HEAD
+
+      - name: Create Docker deployment package
+        run: |
+          set -eu
+          PACKAGE_ROOT="Eval-Any-Agent-Docker"
+          rm -rf "$PACKAGE_ROOT"
+          mkdir -p "$PACKAGE_ROOT/env" "$PACKAGE_ROOT/docker/nginx/ssl"
+
+          cp docker-compose.release.yml "$PACKAGE_ROOT/docker-compose.yml"
+          cp docker-compose.deploy.yml "$PACKAGE_ROOT/docker-compose.deploy.yml"
+          cp env/.env.docker.example "$PACKAGE_ROOT/env/.env.docker.example"
+          cp docker/nginx/default.conf "$PACKAGE_ROOT/docker/nginx/default.conf"
+          cp docker/nginx/ssl/README.md "$PACKAGE_ROOT/docker/nginx/ssl/README.md"
+          cp README.docker.md "$PACKAGE_ROOT/README.docker.md"
+
+          tar -czf "${{ steps.vars.outputs.docker_file_name }}" "$PACKAGE_ROOT"
 
       - name: Upload artifact (every push)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.vars.outputs.artifact_name }}
-          path: ${{ steps.vars.outputs.file_name }}
+          path: |
+            ${{ steps.vars.outputs.source_file_name }}
+            ${{ steps.vars.outputs.docker_file_name }}
           retention-days: 30
 
       - name: Upload asset to Nightly Release
@@ -49,17 +69,27 @@ jobs:
           target_commitish: ${{ github.sha }}
           prerelease: true
           make_latest: false
-          files: ${{ steps.vars.outputs.file_name }}
+          files: |
+            ${{ steps.vars.outputs.source_file_name }}
+            ${{ steps.vars.outputs.docker_file_name }}
           overwrite_files: true
           append_body: false
           fail_on_unmatched_files: true
           body: |
-            自动更新的 Nightly 手动安装包（每次 push 覆盖）。
+            自动更新的 Nightly 安装包（每次 push 覆盖）。
             当前构建：`${{ steps.vars.outputs.version }}`
             提交：`${{ github.sha }}`
             
-            安装示例：
+            Docker 部署包：
             ```bash
-            tar -xzf ${{ steps.vars.outputs.file_name }}
+            tar -xzf ${{ steps.vars.outputs.docker_file_name }}
+            cd Eval-Any-Agent-Docker
+            cp env/.env.docker.example env/.env.docker
+            docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml up -d
+            ```
+
+            源码安装包：
+            ```bash
+            tar -xzf ${{ steps.vars.outputs.source_file_name }}
             cd Eval-Any-Agent
             ```
