@@ -33,7 +33,7 @@ jobs:
 
             const targets = artifacts
               .filter(a => !a.expired)
-              .filter(a => a.name && a.name.startsWith('eval-any-agent-') && a.name.endsWith('.tar.gz'))
+              .filter(a => a.name && a.name.startsWith('eval-any-agent-'))
               .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
             const toDelete = targets.slice(keepCount);
