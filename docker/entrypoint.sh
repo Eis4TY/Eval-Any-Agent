@@ -20,8 +20,8 @@ case "$DATABASE_URL" in
     ;;
 esac
 
-if [ ! -f "$DB_PATH" ]; then
-  echo "[entrypoint] first boot detected, initializing SQLite database at ${DB_PATH}..."
+if [ ! -f "$DB_PATH" ] || [ "$(sqlite3 "$DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' AND name='User';")" != "User" ]; then
+  echo "[entrypoint] missing SQLite schema, initializing database at ${DB_PATH}..."
   mkdir -p "$(dirname "$DB_PATH")"
   sqlite3 "$DB_PATH" < /app/prisma/init.sql
 
