@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -19,7 +18,6 @@ const schema = z.object({
 type FormValue = z.infer<typeof schema>;
 
 export default function LoginPage() {
-  const router = useRouter();
   const [error, setError] = useState("");
   const form = useForm<FormValue>({
     resolver: zodResolver(schema),
@@ -28,11 +26,17 @@ export default function LoginPage() {
 
   async function onSubmit(values: FormValue) {
     setError("");
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(values),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+    } catch {
+      setError("无法连接登录服务，请检查部署地址和网络配置");
+      return;
+    }
 
     if (!res.ok) {
       const json = await res.json().catch(() => ({ message: "登录失败" }));
@@ -40,7 +44,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.replace("/dashboard");
+    window.location.assign("/dashboard");
   }
 
   return (
