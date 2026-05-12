@@ -2,11 +2,27 @@
 set -eu
 
 APP_PORT="${APP_PORT:-3000}"
-DB_PATH="/app/data/dev.db"
+DATABASE_URL="${DATABASE_URL:-file:/app/data/dev.db}"
+export DATABASE_URL
+
+case "$DATABASE_URL" in
+  file:*)
+    DB_PATH="${DATABASE_URL#file:}"
+    DB_PATH="${DB_PATH%%\?*}"
+    case "$DB_PATH" in
+      /*) ;;
+      *) DB_PATH="/app/prisma/$DB_PATH" ;;
+    esac
+    ;;
+  *)
+    echo "[entrypoint] unsupported DATABASE_URL for bundled SQLite init: ${DATABASE_URL}" >&2
+    exit 1
+    ;;
+esac
 
 if [ ! -f "$DB_PATH" ]; then
-  echo "[entrypoint] first boot detected, initializing SQLite database..."
-  mkdir -p /app/data
+  echo "[entrypoint] first boot detected, initializing SQLite database at ${DB_PATH}..."
+  mkdir -p "$(dirname "$DB_PATH")"
   sqlite3 "$DB_PATH" < /app/prisma/init.sql
 
   echo "[entrypoint] seeding default admin..."
