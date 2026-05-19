@@ -7,17 +7,44 @@ export type DatasetParsed = {
   fileType: "csv" | "xlsx";
 };
 
+function isEmptyValue(value: unknown) {
+  if (value === null || value === undefined) return true;
+  return typeof value === "string" ? value.trim() === "" : false;
+}
+
+function isEmptyColumnName(column: string) {
+  const normalized = column.trim();
+  return normalized === "" || /^__EMPTY(?:_\d+)?$/.test(normalized);
+}
+
+function cleanRows(rows: Record<string, unknown>[], preferredColumns?: string[]) {
+  const columnSet = new Set<string>();
+  for (const column of preferredColumns ?? []) {
+    if (!isEmptyColumnName(column)) columnSet.add(column);
+  }
+  for (const row of rows) {
+    for (const [column, value] of Object.entries(row)) {
+      if (!isEmptyColumnName(column) && !isEmptyValue(value)) columnSet.add(column);
+    }
+  }
+
+  const columns = Array.from(columnSet);
+  const cleanedRows = rows
+    .map((row) => {
+      const next: Record<string, unknown> = {};
+      for (const column of columns) {
+        next[column] = row[column] ?? "";
+      }
+      return next;
+    })
+    .filter((row) => Object.values(row).some((value) => !isEmptyValue(value)));
+
+  return { columns, rows: cleanedRows };
+}
+
 export async function parseDataset(file: File): Promise<DatasetParsed> {
   const name = file.name.toLowerCase();
   const bytes = Buffer.from(await file.arrayBuffer());
-
-  const isNotEmptyRow = (row: Record<string, unknown>) => {
-    return Object.values(row).some((v) => {
-      if (v === null || v === undefined) return false;
-      if (typeof v === "string") return v.trim() !== "";
-      return true;
-    });
-  };
 
   if (name.endsWith(".csv")) {
     const text = bytes.toString("utf-8");
@@ -26,8 +53,7 @@ export async function parseDataset(file: File): Promise<DatasetParsed> {
       skipEmptyLines: true,
     });
 
-    const rows = parsed.data.filter(isNotEmptyRow);
-    const columns = parsed.meta.fields ?? [];
+    const { rows, columns } = cleanRows(parsed.data, parsed.meta.fields);
     return { rows, columns, fileType: "csv" };
   }
 
@@ -36,8 +62,7 @@ export async function parseDataset(file: File): Promise<DatasetParsed> {
     const firstSheet = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[firstSheet];
     const allRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: "" });
-    const rows = allRows.filter(isNotEmptyRow);
-    const columns = rows.length ? Object.keys(rows[0]) : [];
+    const { rows, columns } = cleanRows(allRows);
     return { rows, columns, fileType: "xlsx" };
   }
 

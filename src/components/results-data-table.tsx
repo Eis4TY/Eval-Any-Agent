@@ -97,7 +97,7 @@ export function ResultsDataTable<T>({
     Object.fromEntries(columns.map((column) => [column.id, column.width ?? 180])),
   );
   const [columnOrder, setColumnOrder] = useState<string[]>(() => columns.map((column) => column.id));
-  const [visibleColumnIds, setVisibleColumnIds] = useState<string[]>(() => columns.map((column) => column.id));
+  const [hiddenColumnIds, setHiddenColumnIds] = useState<string[]>([]);
   const [draggingColumnId, setDraggingColumnId] = useState("");
   const columnMap = useMemo(() => new Map(columns.map((column) => [column.id, column])), [columns]);
   const columnIds = useMemo(() => columns.map((column) => column.id), [columns]);
@@ -105,10 +105,8 @@ export function ResultsDataTable<T>({
     return mergeColumnOrder(columnOrder, columnIds);
   }, [columnIds, columnOrder]);
   const effectiveVisibleColumnIds = useMemo(() => {
-    const kept = visibleColumnIds.filter((id) => columnIds.includes(id));
-    const added = columnIds.filter((id) => !columnOrder.includes(id));
-    return [...kept, ...added];
-  }, [columnIds, columnOrder, visibleColumnIds]);
+    return columnIds.filter((id) => !hiddenColumnIds.includes(id));
+  }, [columnIds, hiddenColumnIds]);
   const orderedColumns = useMemo(
     () => effectiveColumnOrder.map((id) => columnMap.get(id)).filter((column): column is ResultsTableColumn<T> => Boolean(column)),
     [columnMap, effectiveColumnOrder],
@@ -145,10 +143,10 @@ export function ResultsDataTable<T>({
   }
 
   function toggleColumn(columnId: string, checked: boolean) {
-    setVisibleColumnIds((prev) => {
-      if (checked) return prev.includes(columnId) ? prev : [...prev, columnId];
-      if (prev.length <= 1) return prev;
-      return prev.filter((id) => id !== columnId);
+    setHiddenColumnIds((prev) => {
+      if (checked) return prev.filter((id) => id !== columnId);
+      if (effectiveVisibleColumnIds.length <= 1) return prev;
+      return prev.includes(columnId) ? prev : [...prev, columnId];
     });
   }
 

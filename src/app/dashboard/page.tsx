@@ -33,6 +33,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { ModeToggle } from "@/components/mode-toggle";
+import { JsonEditor } from "@/components/json-editor";
 
 type Dataset = {
   id: string;
@@ -95,6 +96,12 @@ type ProviderConfig = {
   createdAt: string;
 };
 
+type ProviderHealth = {
+  status: "unknown" | "checking" | "healthy" | "unhealthy";
+  message?: string;
+  latencyMs?: number;
+};
+
 type Evaluator = {
   id: string;
   name: string;
@@ -102,6 +109,7 @@ type Evaluator = {
   model: string;
   systemPrompt: string;
   userPromptTemplate: string;
+  thinkingEnabled: boolean;
   scoreMin: number;
   scoreMax: number;
   passThreshold: number;
@@ -183,6 +191,7 @@ export default function DashboardPage() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
+  const [providerHealth, setProviderHealth] = useState<Record<string, ProviderHealth>>({});
   const [evaluators, setEvaluators] = useState<Evaluator[]>([]);
   const [evaluationTasks, setEvaluationTasks] = useState<EvaluationTask[]>([]);
 
@@ -240,6 +249,7 @@ export default function DashboardPage() {
   const [evaluatorModel, setEvaluatorModel] = useState("gpt-4o-mini");
   const [evaluatorSystemPrompt, setEvaluatorSystemPrompt] = useState("你是一个严格的评估助手。请根据用户提供的输入、参考答案和模型输出进行评估，并返回 JSON：{\"score\": number, \"reason\": string, \"passed\": boolean}。");
   const [evaluatorUserPrompt, setEvaluatorUserPrompt] = useState("请评估以下任务结果。\n输入：{{input}}\n参考答案：{{reference_output}}\n模型输出：{{outputs.text}}\n任务状态：{{result.status}}");
+  const [evaluatorThinkingEnabled, setEvaluatorThinkingEnabled] = useState(false);
   const [evaluatorScoreMin, setEvaluatorScoreMin] = useState("0");
   const [evaluatorScoreMax, setEvaluatorScoreMax] = useState("100");
   const [evaluatorPassThreshold, setEvaluatorPassThreshold] = useState("60");
@@ -254,6 +264,7 @@ export default function DashboardPage() {
   const [evaluationSuccessCount, setEvaluationSuccessCount] = useState(0);
   const [evaluationPage, setEvaluationPage] = useState(1);
   const [dryRunEvaluatorId, setDryRunEvaluatorId] = useState("");
+  const [isEvaluatorFormDryRunning, setIsEvaluatorFormDryRunning] = useState(false);
   const [evaluatorDryRunTaskId, setEvaluatorDryRunTaskId] = useState("");
   const [evaluatorDryRunResultId, setEvaluatorDryRunResultId] = useState("");
   const [evaluatorDryRunRows, setEvaluatorDryRunRows] = useState<ResultRow[]>([]);
@@ -318,6 +329,7 @@ export default function DashboardPage() {
     setEvaluatorModel(providers[0]?.defaultModel ?? "gpt-4o-mini");
     setEvaluatorSystemPrompt("你是一个严格的评估助手。请根据用户提供的输入、参考答案和模型输出进行评估，并返回 JSON：{\"score\": number, \"reason\": string, \"passed\": boolean}。");
     setEvaluatorUserPrompt("请评估以下任务结果。\n输入：{{input}}\n参考答案：{{reference_output}}\n模型输出：{{outputs.text}}\n任务状态：{{result.status}}");
+    setEvaluatorThinkingEnabled(false);
     setEvaluatorScoreMin("0");
     setEvaluatorScoreMax("100");
     setEvaluatorPassThreshold("60");
@@ -769,11 +781,6 @@ export default function DashboardPage() {
     setActiveTab("results");
   }
 
-  function openResultPage(url: string) {
-    const opened = window.open(url, "_blank", "noopener,noreferrer");
-    if (!opened) window.location.href = url;
-  }
-
   async function exportTask(format: "xlsx" | "csv") {
     if (!resultTaskId) return;
     const columns = encodeURIComponent(JSON.stringify(selectedExportColumns));
@@ -851,8 +858,49 @@ export default function DashboardPage() {
   async function deleteProvider(providerId: string) {
     await api(`/api/llm-providers/${providerId}`, { method: "DELETE" });
     toast.success("模型配置已删除");
+    setProviderHealth((prev) => {
+      const next = { ...prev };
+      delete next[providerId];
+      return next;
+    });
     if (editingProviderId === providerId) resetProviderForm();
     await loadBase();
+  }
+
+  async function checkProviderHealth(provider: ProviderConfig) {
+    setProviderHealth((prev) => ({
+      ...prev,
+      [provider.id]: { status: "checking" },
+    }));
+
+    try {
+      const result = await api<{ healthy: boolean; latencyMs?: number; message?: string }>(
+        `/api/llm-providers/${provider.id}/health-check`,
+        { method: "POST" },
+      );
+
+      if (result.healthy) {
+        setProviderHealth((prev) => ({
+          ...prev,
+          [provider.id]: { status: "healthy", latencyMs: result.latencyMs },
+        }));
+        toast.success(`${provider.name} 连通性正常${result.latencyMs ? `，耗时 ${result.latencyMs}ms` : ""}`);
+        return;
+      }
+
+      setProviderHealth((prev) => ({
+        ...prev,
+        [provider.id]: { status: "unhealthy", message: result.message },
+      }));
+      toast.error(`${provider.name} 连通性异常：${result.message ?? "请求失败"}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "请求失败";
+      setProviderHealth((prev) => ({
+        ...prev,
+        [provider.id]: { status: "unhealthy", message },
+      }));
+      toast.error(`${provider.name} 连通性异常：${message}`);
+    }
   }
 
   async function saveEvaluator() {
@@ -860,9 +908,10 @@ export default function DashboardPage() {
     const payload = {
       name: evaluatorName,
       providerConfigId: evaluatorProviderId,
-      model: selectedProvider?.defaultModel ?? evaluatorModel,
+      model: evaluatorModel || selectedProvider?.defaultModel || "",
       systemPrompt: evaluatorSystemPrompt,
       userPromptTemplate: evaluatorUserPrompt,
+      thinkingEnabled: evaluatorThinkingEnabled,
       scoreMin: Number(evaluatorScoreMin),
       scoreMax: Number(evaluatorScoreMax),
       passThreshold: Number(evaluatorPassThreshold),
@@ -894,6 +943,7 @@ export default function DashboardPage() {
     setEvaluatorModel(item.model);
     setEvaluatorSystemPrompt(item.systemPrompt);
     setEvaluatorUserPrompt(item.userPromptTemplate);
+    setEvaluatorThinkingEnabled(item.thinkingEnabled);
     setEvaluatorScoreMin(String(item.scoreMin));
     setEvaluatorScoreMax(String(item.scoreMax));
     setEvaluatorPassThreshold(String(item.passThreshold));
@@ -908,12 +958,49 @@ export default function DashboardPage() {
     await loadBase();
   }
 
-  async function runEvaluatorDryRun(evaluatorId: string) {
+  async function runEvaluatorFormDryRun() {
+    if (isEvaluatorFormDryRunning) return;
+    if (!evaluatorDryRunTaskId || !evaluatorDryRunResultId) {
+      toast.error("请先选择一个任务结果作为评估对象");
+      return;
+    }
+    if (!evaluatorProviderId || !evaluatorModel || !evaluatorSystemPrompt || !evaluatorUserPrompt) {
+      toast.error("请先填写模型配置、模型名和评估 Prompt");
+      return;
+    }
+
+    setIsEvaluatorFormDryRunning(true);
+    try {
+      const data = await api<Record<string, unknown>>("/api/evaluators/dry-run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providerConfigId: evaluatorProviderId,
+          model: evaluatorModel,
+          systemPrompt: evaluatorSystemPrompt,
+          userPromptTemplate: evaluatorUserPrompt,
+          thinkingEnabled: evaluatorThinkingEnabled,
+          sourceTaskId: evaluatorDryRunTaskId,
+          sourceResultId: evaluatorDryRunResultId,
+        }),
+      });
+      setDetailText(JSON.stringify(data, null, 2));
+      setDetailOpen(true);
+      toast.success("评估预览完成");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "评估预览失败");
+    } finally {
+      setIsEvaluatorFormDryRunning(false);
+    }
+  }
+
+  async function previewSavedEvaluator(evaluatorId: string) {
     if (dryRunEvaluatorId) return;
     if (!evaluatorDryRunTaskId || !evaluatorDryRunResultId) {
       toast.error("请先选择一个任务结果作为评估对象");
       return;
     }
+
     setDryRunEvaluatorId(evaluatorId);
     try {
       const data = await api<Record<string, unknown>>(`/api/evaluators/${evaluatorId}/dry-run`, {
@@ -927,6 +1014,8 @@ export default function DashboardPage() {
       setDetailText(JSON.stringify(data, null, 2));
       setDetailOpen(true);
       toast.success("评估预览完成");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "评估预览失败");
     } finally {
       setDryRunEvaluatorId("");
     }
@@ -1091,19 +1180,19 @@ export default function DashboardPage() {
                   <div className="space-y-4 rounded-lg border p-4">
                     <div className="space-y-2">
                       <div className="text-sm font-medium">输入绑定 input_bindings（JSON）</div>
-                      <Textarea
-                        className="focus-visible:ring-0 focus-visible:border-ring"
+                      <JsonEditor
+                        ariaLabel="输入绑定 JSON"
                         value={inputBindings}
-                        onChange={(e) => setInputBindings(e.target.value)}
+                        onChange={setInputBindings}
                         rows={10}
                       />
                     </div>
                     <div className="space-y-2">
                       <div className="text-sm font-medium">Header 配置（JSON）</div>
-                      <Textarea
-                        className="focus-visible:ring-0 focus-visible:border-ring"
+                      <JsonEditor
+                        ariaLabel="Header 配置 JSON"
                         value={headerConfig}
-                        onChange={(e) => setHeaderConfig(e.target.value)}
+                        onChange={setHeaderConfig}
                         rows={10}
                       />
                     </div>
@@ -1112,10 +1201,10 @@ export default function DashboardPage() {
                   <div className="space-y-4 rounded-lg border p-4">
                     <div className="space-y-2">
                       <div className="text-sm font-medium">请求体模板（JSON）</div>
-                      <Textarea
-                        className="focus-visible:ring-0 focus-visible:border-ring"
+                      <JsonEditor
+                        ariaLabel="请求体模板 JSON"
                         value={requestTemplate}
-                        onChange={(e) => setRequestTemplate(e.target.value)}
+                        onChange={setRequestTemplate}
                         rows={28}
                       />
                     </div>
@@ -1124,10 +1213,10 @@ export default function DashboardPage() {
                   <div className="space-y-4 rounded-lg border p-4">
                     <div className="space-y-2">
                       <div className="text-sm font-medium">提取规则 extract_rules</div>
-                      <Textarea
-                        className="focus-visible:ring-0 focus-visible:border-ring"
+                      <JsonEditor
+                        ariaLabel="提取规则 JSON"
                         value={extractRules}
-                        onChange={(e) => setExtractRules(e.target.value)}
+                        onChange={setExtractRules}
                         rows={10}
                       />
                     </div>
@@ -1151,10 +1240,10 @@ export default function DashboardPage() {
                           </SelectContent>
                         </Select>
                       </div>
-                      <Textarea
-                        className="focus-visible:ring-0 focus-visible:border-ring"
+                      <JsonEditor
+                        ariaLabel="结束信号规则 JSON"
                         value={doneRules}
-                        onChange={(e) => setDoneRules(e.target.value)}
+                        onChange={setDoneRules}
                         rows={10}
                       />
                       <div className="flex items-center gap-2">
@@ -1283,24 +1372,45 @@ export default function DashboardPage() {
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                        <div className="text-sm font-medium">请求 Payload (发送给上游)</div>
-                       <ScrollArea className="h-64 w-full rounded border p-3 bg-muted/50">
-                          <pre className="text-xs whitespace-pre-wrap break-all">{JSON.stringify(dryRunResponse.requestPayload, null, 2)}</pre>
-                       </ScrollArea>
+                       <JsonEditor
+                         ariaLabel="Dry Run 请求 Payload JSON"
+                         value={JSON.stringify(dryRunResponse.requestPayload, null, 2)}
+                         onChange={() => undefined}
+                         readOnly
+                         rows={10}
+                         height="16rem"
+                       />
                     </div>
                     <div className="space-y-2">
                        <div className="text-sm font-medium">提取结果 (Outputs)</div>
-                       <ScrollArea className="h-64 w-full rounded border p-3 bg-muted/50">
-                          <pre className="text-xs whitespace-pre-wrap break-all">{JSON.stringify(dryRunResponse.outputs, null, 2)}</pre>
-                       </ScrollArea>
+                       <JsonEditor
+                         ariaLabel="Dry Run 提取结果 JSON"
+                         value={JSON.stringify(dryRunResponse.outputs, null, 2)}
+                         onChange={() => undefined}
+                         readOnly
+                         rows={10}
+                         height="16rem"
+                       />
                     </div>
                   </div>
                 )}
 
                 <div className="space-y-2">
                   <div className="text-sm font-medium">完整结果详情</div>
-                  <ScrollArea className="h-80 w-full rounded border p-3 bg-card">
-                    <pre className="text-xs whitespace-pre-wrap break-all">{dryRunResponse ? JSON.stringify(dryRunResponse, null, 2) : "暂无结果"}</pre>
-                  </ScrollArea>
+                  {dryRunResponse ? (
+                    <JsonEditor
+                      ariaLabel="Dry Run 完整结果 JSON"
+                      value={JSON.stringify(dryRunResponse, null, 2)}
+                      onChange={() => undefined}
+                      readOnly
+                      rows={13}
+                      height="20rem"
+                    />
+                  ) : (
+                    <div className="flex h-80 items-center rounded-md border border-input px-3 py-2 text-sm text-muted-foreground">
+                      暂无结果
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -1403,10 +1513,6 @@ export default function DashboardPage() {
                                       href={`/dashboard/tasks/${task.id}/results`}
                                       target="_blank"
                                       rel="noreferrer"
-                                      onClick={(event) => {
-                                        event.preventDefault();
-                                        openResultPage(`/dashboard/tasks/${task.id}/results`);
-                                      }}
                                     >
                                       查看
                                     </Link>
@@ -1636,25 +1742,58 @@ export default function DashboardPage() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>名称</TableHead>
-                          <TableHead>默认模型</TableHead>
-                          <TableHead>API Key</TableHead>
+                          <TableHead>健康状态</TableHead>
                           <TableHead>操作</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {providers.map((provider) => (
-                          <TableRow key={provider.id}>
-                            <TableCell>{provider.name}</TableCell>
-                            <TableCell>{provider.defaultModel}</TableCell>
-                            <TableCell className="font-mono text-xs">{provider.apiKeyMasked}</TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                <Button size="sm" variant="outline" onClick={() => editProvider(provider)}>修改</Button>
-                                <Button size="sm" variant="destructive" onClick={() => deleteProvider(provider.id)}>删除</Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {providers.map((provider) => {
+                          const health = providerHealth[provider.id] ?? { status: "unknown" as const };
+                          const healthLabel =
+                            health.status === "healthy"
+                              ? health.latencyMs
+                                ? `正常 ${health.latencyMs}ms`
+                                : "正常"
+                              : health.status === "unhealthy"
+                                ? "异常"
+                                : health.status === "checking"
+                                  ? "检测中"
+                                  : "未检测";
+                          const dotClassName =
+                            health.status === "healthy"
+                              ? "bg-emerald-500"
+                              : health.status === "unhealthy"
+                                ? "bg-red-500"
+                                : health.status === "checking"
+                                  ? "bg-amber-500"
+                                  : "bg-muted-foreground/50";
+
+                          return (
+                            <TableRow key={provider.id}>
+                              <TableCell>{provider.name}</TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2 whitespace-nowrap text-sm">
+                                  <span className={`size-2.5 rounded-full ${dotClassName}`} />
+                                  <span>{healthLabel}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => checkProviderHealth(provider)}
+                                    disabled={health.status === "checking"}
+                                  >
+                                    检测
+                                  </Button>
+                                  <Button size="sm" variant="outline" onClick={() => editProvider(provider)}>修改</Button>
+                                  <Button size="sm" variant="destructive" onClick={() => deleteProvider(provider.id)}>删除</Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </div>
@@ -1685,6 +1824,18 @@ export default function DashboardPage() {
                           </SelectContent>
                         </Select>
                       </div>
+                      <div className="space-y-2">
+                        <div className="text-sm font-medium">模型名</div>
+                        <Input value={evaluatorModel} onChange={(e) => setEvaluatorModel(e.target.value)} placeholder="模型名" />
+                      </div>
+                      <div className="flex items-center gap-2 pt-8">
+                        <Checkbox
+                          checked={evaluatorThinkingEnabled}
+                          onCheckedChange={(value) => setEvaluatorThinkingEnabled(Boolean(value))}
+                          id="evaluator-thinking-enabled"
+                        />
+                        <label htmlFor="evaluator-thinking-enabled" className="text-sm">启用 Thinking</label>
+                      </div>
                     </div>
                     <div className="space-y-2">
                       <div className="text-sm font-medium">System Prompt</div>
@@ -1704,31 +1855,41 @@ export default function DashboardPage() {
                       </AlertDescription>
                     </Alert>
                     <div className="space-y-3 rounded-lg border p-3">
-                      <div className="text-sm font-medium">Dry Run 评估对象</div>
-                      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                        <div className="space-y-2">
-                          <div className="text-xs text-muted-foreground">选择任务</div>
-                          <Select value={evaluatorDryRunTaskId} onValueChange={setEvaluatorDryRunTaskId}>
-                            <SelectTrigger><SelectValue placeholder="选择任务" /></SelectTrigger>
-                            <SelectContent>
-                              {tasks.map((task) => (
-                                <SelectItem key={task.id} value={task.id}>
-                                  {task.id.slice(0, 8)} - {task.profile.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-2">
-                          <div className="text-xs text-muted-foreground">选择任务结果</div>
-                          <Select value={evaluatorDryRunResultId} onValueChange={setEvaluatorDryRunResultId}>
-                            <SelectTrigger><SelectValue placeholder="选择任务结果" /></SelectTrigger>
-                            <SelectContent>
-                              {evaluatorDryRunRows.map((row) => (
-                                <SelectItem key={row.id} value={row.id}>
-                                  第 {row.rowIndex} 行 / {getReplyPreview(row.outputs).slice(0, 24) || "-"}
-                                </SelectItem>
-                              ))}
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-medium">Dry Run 评估对象</div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={runEvaluatorFormDryRun}
+                          disabled={isEvaluatorFormDryRunning}
+                        >
+                          {isEvaluatorFormDryRunning ? "正在请求" : "发送"}
+                        </Button>
+                      </div>
+	                      <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2">
+	                        <div className="min-w-0 space-y-2">
+	                          <div className="text-xs text-muted-foreground">选择执行任务</div>
+	                          <Select value={evaluatorDryRunTaskId} onValueChange={setEvaluatorDryRunTaskId}>
+	                            <SelectTrigger className="w-full min-w-0"><SelectValue placeholder="选择任务" /></SelectTrigger>
+	                            <SelectContent className="max-w-[22rem]">
+	                              {tasks.map((task) => (
+	                                <SelectItem key={task.id} value={task.id}>
+	                                  <span className="block max-w-[19rem] truncate">{task.id.slice(0, 8)} - {task.profile.name}</span>
+	                                </SelectItem>
+	                              ))}
+	                            </SelectContent>
+	                          </Select>
+	                        </div>
+	                        <div className="min-w-0 space-y-2">
+	                          <div className="text-xs text-muted-foreground">选择执行结果</div>
+	                          <Select value={evaluatorDryRunResultId} onValueChange={setEvaluatorDryRunResultId}>
+	                            <SelectTrigger className="w-full min-w-0"><SelectValue placeholder="选择任务结果" /></SelectTrigger>
+	                            <SelectContent className="max-w-[26rem]">
+	                              {evaluatorDryRunRows.map((row) => (
+	                                <SelectItem key={row.id} value={row.id}>
+	                                  <span className="block max-w-[23rem] truncate">第 {row.rowIndex} 行 / {getReplyPreview(row.outputs) || "-"}</span>
+	                                </SelectItem>
+	                              ))}
                             </SelectContent>
                           </Select>
                         </div>
@@ -1757,15 +1918,6 @@ export default function DashboardPage() {
                     </div>
                     <div className="flex items-center gap-2">
                       <Button onClick={saveEvaluator}>{editingEvaluatorId ? "更新评估器" : "创建评估器"}</Button>
-                      {editingEvaluatorId ? (
-                        <Button
-                          variant="outline"
-                          onClick={() => runEvaluatorDryRun(editingEvaluatorId)}
-                          disabled={dryRunEvaluatorId === editingEvaluatorId}
-                        >
-                          {dryRunEvaluatorId === editingEvaluatorId ? "正在请求" : "Dry Run"}
-                        </Button>
-                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -1777,7 +1929,7 @@ export default function DashboardPage() {
                       <TableRow>
                         <TableHead>名称</TableHead>
                         <TableHead>模型配置</TableHead>
-                        <TableHead>模型</TableHead>
+                        <TableHead>Thinking</TableHead>
                         <TableHead>评分区间</TableHead>
                         <TableHead>操作</TableHead>
                       </TableRow>
@@ -1787,7 +1939,11 @@ export default function DashboardPage() {
                         <TableRow key={item.id}>
                           <TableCell>{item.name}</TableCell>
                           <TableCell>{item.providerConfig?.name ?? "-"}</TableCell>
-                          <TableCell>{item.model}</TableCell>
+                          <TableCell>
+                            <Badge variant={item.thinkingEnabled ? "default" : "secondary"}>
+                              {item.thinkingEnabled ? "开启" : "关闭"}
+                            </Badge>
+                          </TableCell>
                           <TableCell>{item.scoreMin} - {item.scoreMax}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
@@ -1795,8 +1951,8 @@ export default function DashboardPage() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => runEvaluatorDryRun(item.id)}
-                                disabled={dryRunEvaluatorId === item.id}
+                                onClick={() => previewSavedEvaluator(item.id)}
+                                disabled={Boolean(dryRunEvaluatorId)}
                               >
                                 {dryRunEvaluatorId === item.id ? "正在请求" : "预览"}
                               </Button>
@@ -1878,10 +2034,6 @@ export default function DashboardPage() {
                                       href={`/dashboard/evaluation-tasks/${task.id}/results`}
                                       target="_blank"
                                       rel="noreferrer"
-                                      onClick={(event) => {
-                                        event.preventDefault();
-                                        openResultPage(`/dashboard/evaluation-tasks/${task.id}/results`);
-                                      }}
                                     >
                                       查看
                                     </Link>
@@ -1999,14 +2151,14 @@ export default function DashboardPage() {
       </div>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="w-[95vw] max-w-4xl overflow-hidden p-0">
+        <DialogContent className="w-[96vw] max-w-[96vw] sm:max-w-[96vw] overflow-hidden p-0">
           <DialogHeader>
             <DialogTitle className="px-6 pt-6">结果详情</DialogTitle>
           </DialogHeader>
-          <div className="px-6 pb-6">
-            <ScrollArea className="h-[70vh] w-full rounded border p-3">
-              <pre className="whitespace-pre-wrap break-words text-xs">{detailText}</pre>
-            </ScrollArea>
+          <div className="min-w-0 px-6 pb-6">
+            <div className="h-[82vh] min-w-0 max-w-full overflow-x-scroll overflow-y-scroll rounded border bg-card p-3">
+              <pre className="block w-max max-w-none whitespace-pre text-xs">{detailText}</pre>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

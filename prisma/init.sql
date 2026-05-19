@@ -112,6 +112,7 @@ CREATE TABLE "Evaluator" (
     "model" TEXT NOT NULL,
     "systemPrompt" TEXT NOT NULL,
     "userPromptTemplate" TEXT NOT NULL,
+    "thinkingEnabled" BOOLEAN NOT NULL DEFAULT false,
     "scoreMin" REAL NOT NULL DEFAULT 0,
     "scoreMax" REAL NOT NULL DEFAULT 100,
     "passThreshold" REAL NOT NULL DEFAULT 60,
@@ -215,4 +216,3 @@ CREATE INDEX "EvaluationResult_sourceResultId_idx" ON "EvaluationResult"("source
 
 -- CreateIndex
 CREATE INDEX "EvaluationResult_rowIndex_idx" ON "EvaluationResult"("rowIndex");
-

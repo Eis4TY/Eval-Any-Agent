@@ -9,6 +9,7 @@ const schema = z.object({
   model: z.string().min(1),
   systemPrompt: z.string().min(1),
   userPromptTemplate: z.string().min(1),
+  thinkingEnabled: z.boolean().default(false),
   scoreMin: z.number(),
   scoreMax: z.number(),
   passThreshold: z.number(),

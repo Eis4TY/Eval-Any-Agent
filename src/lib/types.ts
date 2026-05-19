@@ -37,6 +37,7 @@ export type EvaluatorDto = {
   model: string;
   systemPrompt: string;
   userPromptTemplate: string;
+  thinkingEnabled: boolean;
   scoreMin: number;
   scoreMax: number;
   passThreshold: number;

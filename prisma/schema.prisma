@@ -147,6 +147,7 @@ model Evaluator {
   model              String
   systemPrompt       String
   userPromptTemplate String
+  thinkingEnabled    Boolean  @default(false)
   scoreMin           Float    @default(0)
   scoreMax           Float    @default(100)
   passThreshold      Float    @default(60)

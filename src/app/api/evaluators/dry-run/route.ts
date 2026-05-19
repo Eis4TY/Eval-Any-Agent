@@ -7,23 +7,26 @@ import { parseJson } from "@/lib/json";
 import { prisma } from "@/lib/prisma";
 
 const schema = z.object({
+  providerConfigId: z.string().min(1),
+  model: z.string().min(1),
+  systemPrompt: z.string().min(1),
+  userPromptTemplate: z.string().min(1),
+  thinkingEnabled: z.boolean().default(false),
   sourceResultId: z.string().optional(),
   sourceTaskId: z.string().optional(),
 });
 
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: Request) {
   try {
     const session = await requireSession();
-    const { id } = await params;
     const body = await req.json().catch(() => null);
     const parsed = schema.safeParse(body);
-    if (!parsed.success) return fail("参数不合法", 400);
+    if (!parsed.success) return fail("评估预览参数不合法", 400);
 
-    const evaluator = await prisma.evaluator.findFirst({
-      where: { id, userId: session.uid },
-      include: { providerConfig: true },
+    const provider = await prisma.llmProviderConfig.findFirst({
+      where: { id: parsed.data.providerConfigId, userId: session.uid },
     });
-    if (!evaluator) return fail("评估器不存在", 404);
+    if (!provider) return fail("模型配置不存在", 404);
 
     let sourceResult = null;
     if (parsed.data.sourceResultId) {
@@ -45,19 +48,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     if (!sourceResult) return fail("未找到可用于预览的任务结果", 404);
 
     const variables = buildEvaluationContext(sourceResult);
-    const userPrompt = renderEvaluationPrompt(evaluator.userPromptTemplate, variables);
+    const userPrompt = renderEvaluationPrompt(parsed.data.userPromptTemplate, variables);
     const response = await evaluateByLlm({
-      baseUrl: evaluator.providerConfig.baseUrl,
-      apiKey: evaluator.providerConfig.apiKeyEncrypted,
-      model: evaluator.model,
-      systemPrompt: evaluator.systemPrompt,
+      baseUrl: provider.baseUrl,
+      apiKey: provider.apiKeyEncrypted,
+      model: parsed.data.model,
+      systemPrompt: parsed.data.systemPrompt,
       userPrompt,
-      thinkingEnabled: evaluator.thinkingEnabled,
+      thinkingEnabled: parsed.data.thinkingEnabled,
       timeoutMs: 10000,
     });
 
     return ok({
-      systemPrompt: evaluator.systemPrompt,
+      systemPrompt: parsed.data.systemPrompt,
       userPrompt,
       result: response,
       preview: {

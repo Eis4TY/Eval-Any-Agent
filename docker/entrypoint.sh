@@ -60,5 +60,10 @@ main().catch((error) => {
 NODE
 fi
 
+if [ "$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM pragma_table_info('Evaluator') WHERE name='thinkingEnabled';")" = "0" ]; then
+  echo "[entrypoint] adding missing Evaluator.thinkingEnabled column..."
+  sqlite3 "$DB_PATH" 'ALTER TABLE "Evaluator" ADD COLUMN "thinkingEnabled" BOOLEAN NOT NULL DEFAULT false;'
+fi
+
 echo "[entrypoint] starting Next.js on port ${APP_PORT}..."
 exec npm run start -- -p "${APP_PORT}"
