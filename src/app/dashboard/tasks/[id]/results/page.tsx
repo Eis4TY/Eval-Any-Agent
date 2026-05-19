@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { ResultsDataTable, type ResultsTableColumn } from "@/components/results-data-table";
 
 type TaskDetail = {
@@ -52,14 +51,20 @@ function previewValue(value: unknown) {
 }
 
 function parseColumnNames(value: string[] | string | undefined) {
-  if (Array.isArray(value)) return value.filter(Boolean);
+  if (Array.isArray(value)) return value.filter((item) => item && !isEmptyColumnName(item));
   if (!value) return [];
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string" && item.length > 0 && !isEmptyColumnName(item))
+      : [];
   } catch {
     return [];
   }
+}
+
+function isEmptyColumnName(column: string) {
+  return column.trim() === "" || /^__EMPTY(?:_\d+)?$/.test(column.trim());
 }
 
 function getStructuredKeys<T>(
@@ -67,7 +72,7 @@ function getStructuredKeys<T>(
   rows: T[],
   accessor: (row: T) => Record<string, unknown>,
 ) {
-  const discovered = rows.flatMap((row) => Object.keys(accessor(row)));
+  const discovered = rows.flatMap((row) => Object.keys(accessor(row)).filter((key) => !isEmptyColumnName(key)));
   return Array.from(new Set([...configuredColumns, ...discovered]));
 }
 
@@ -269,14 +274,14 @@ export default function TaskResultsPage() {
       </div>
 
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="w-[95vw] max-w-4xl overflow-hidden p-0">
+        <DialogContent className="w-[96vw] max-w-[96vw] sm:max-w-[96vw] overflow-hidden p-0">
           <DialogHeader>
             <DialogTitle className="px-6 pt-6">结果详情</DialogTitle>
           </DialogHeader>
-          <div className="px-6 pb-6">
-            <ScrollArea className="h-[70vh] w-full rounded border p-3">
-              <pre className="whitespace-pre-wrap break-words text-xs">{detailText}</pre>
-            </ScrollArea>
+          <div className="min-w-0 px-6 pb-6">
+            <div className="h-[82vh] min-w-0 max-w-full overflow-x-scroll overflow-y-scroll rounded border bg-card p-3">
+              <pre className="block w-max max-w-none whitespace-pre text-xs">{detailText}</pre>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

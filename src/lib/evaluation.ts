@@ -104,6 +104,7 @@ export async function runEvaluationTask(taskId: string) {
             model: task.evaluator.model,
             systemPrompt: task.evaluator.systemPrompt,
             userPrompt,
+            thinkingEnabled: task.evaluator.thinkingEnabled,
           });
 
           const scoreValid = response.score >= task.evaluator.scoreMin && response.score <= task.evaluator.scoreMax;

@@ -10,6 +10,8 @@ function Progress({
   value,
   ...props
 }: React.ComponentProps<typeof ProgressPrimitive.Root>) {
+  const isComplete = (value ?? 0) >= 100
+
   return (
     <ProgressPrimitive.Root
       data-slot="progress"
@@ -21,7 +23,7 @@ function Progress({
     >
       <ProgressPrimitive.Indicator
         data-slot="progress-indicator"
-        className="h-full w-full flex-1 bg-primary transition-all"
+        className={cn("h-full w-full flex-1 transition-all", isComplete ? "bg-[#71E7A1]" : "bg-primary")}
         style={{ transform: `translateX(-${100 - (value || 0)}%)` }}
       />
     </ProgressPrimitive.Root>

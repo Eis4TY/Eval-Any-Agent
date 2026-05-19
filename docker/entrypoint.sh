@@ -2,11 +2,27 @@
 set -eu
 
 APP_PORT="${APP_PORT:-3000}"
-DB_PATH="/app/data/dev.db"
+DATABASE_URL="${DATABASE_URL:-file:/app/data/dev.db}"
+export DATABASE_URL
 
-if [ ! -f "$DB_PATH" ]; then
-  echo "[entrypoint] first boot detected, initializing SQLite database..."
-  mkdir -p /app/data
+case "$DATABASE_URL" in
+  file:*)
+    DB_PATH="${DATABASE_URL#file:}"
+    DB_PATH="${DB_PATH%%\?*}"
+    case "$DB_PATH" in
+      /*) ;;
+      *) DB_PATH="/app/prisma/$DB_PATH" ;;
+    esac
+    ;;
+  *)
+    echo "[entrypoint] unsupported DATABASE_URL for bundled SQLite init: ${DATABASE_URL}" >&2
+    exit 1
+    ;;
+esac
+
+if [ ! -f "$DB_PATH" ] || [ "$(sqlite3 "$DB_PATH" "SELECT name FROM sqlite_master WHERE type='table' AND name='User';")" != "User" ]; then
+  echo "[entrypoint] missing SQLite schema, initializing database at ${DB_PATH}..."
+  mkdir -p "$(dirname "$DB_PATH")"
   sqlite3 "$DB_PATH" < /app/prisma/init.sql
 
   echo "[entrypoint] seeding default admin..."
@@ -42,6 +58,11 @@ main().catch((error) => {
   process.exit(1);
 });
 NODE
+fi
+
+if [ "$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM pragma_table_info('Evaluator') WHERE name='thinkingEnabled';")" = "0" ]; then
+  echo "[entrypoint] adding missing Evaluator.thinkingEnabled column..."
+  sqlite3 "$DB_PATH" 'ALTER TABLE "Evaluator" ADD COLUMN "thinkingEnabled" BOOLEAN NOT NULL DEFAULT false;'
 fi
 
 echo "[entrypoint] starting Next.js on port ${APP_PORT}..."

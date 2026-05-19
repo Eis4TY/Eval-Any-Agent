@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import { z } from "zod";
 
 const evaluationResponseSchema = z.object({
@@ -13,6 +14,7 @@ export type EvaluateByLlmInput = {
   model: string;
   systemPrompt: string;
   userPrompt: string;
+  thinkingEnabled?: boolean;
   timeoutMs?: number;
 };
 
@@ -37,7 +39,10 @@ export async function evaluateByLlm(input: EvaluateByLlmInput): Promise<Evaluate
     timeout: input.timeoutMs ?? 60000,
   });
 
-  const completion = await client.chat.completions.create({
+  const thinkingParams = input.thinkingEnabled ? { enable_thinking: true } : {};
+  const params: ChatCompletionCreateParamsNonStreaming & {
+    enable_thinking?: boolean;
+  } = {
     model: input.model,
     temperature: 0,
     response_format: { type: "json_object" },
@@ -45,10 +50,18 @@ export async function evaluateByLlm(input: EvaluateByLlmInput): Promise<Evaluate
       { role: "system", content: input.systemPrompt },
       { role: "user", content: input.userPrompt },
     ],
-  });
+    ...thinkingParams,
+  };
+  const completion = await client.chat.completions.create(params);
 
   const rawResponse = completion.choices[0]?.message?.content ?? "";
-  const parsed = JSON.parse(extractJsonObject(rawResponse));
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(extractJsonObject(rawResponse));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "JSON 解析失败";
+    throw new Error(`模型返回内容不是合法 JSON：${message}`);
+  }
   const result = evaluationResponseSchema.parse(parsed);
 
   return {
