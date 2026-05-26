@@ -2,3 +2,8 @@ services:
   app:
     image: ${APP_IMAGE:?APP_IMAGE is required}
     pull_policy: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
