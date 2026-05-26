@@ -70,14 +70,6 @@ function getStructuredKeys<T>(
   return Array.from(new Set([...configuredColumns, ...discovered]));
 }
 
-function outputPreview(outputs: Record<string, unknown>) {
-  for (const value of Object.values(outputs)) {
-    const preview = previewValue(value);
-    if (preview.trim() && preview !== "{}" && preview !== "[]") return preview;
-  }
-  return previewValue(outputs);
-}
-
 function formatDateTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
@@ -135,6 +127,8 @@ export default function TaskResultsPage() {
     () => getStructuredKeys(parseColumnNames(task?.dataset.columns), rows, (row) => row.inputData),
     [rows, task?.dataset.columns],
   );
+  const requestPayloadKeys = useMemo(() => getStructuredKeys([], rows, (row) => row.requestPayload), [rows]);
+  const outputKeys = useMemo(() => getStructuredKeys([], rows, (row) => row.outputs), [rows]);
 
   const columns = useMemo<ResultsTableColumn<ResultRow>[]>(
     () => [
@@ -143,12 +137,25 @@ export default function TaskResultsPage() {
       { id: "latencyMs", header: "总耗时(ms)", width: 130, minWidth: 110, cell: (row) => row.latencyMs ?? "-" },
       ...inputKeys.map((key) => ({
         id: `input:${key}`,
-        header: key,
+        header: `输入：${key}`,
         width: 220,
         minWidth: 140,
         cell: (row: ResultRow) => previewValue(row.inputData[key]),
       })),
-      { id: "outputs", header: "提取输出摘要", width: 320, minWidth: 180, cell: (row) => outputPreview(row.outputs) },
+      ...requestPayloadKeys.map((key) => ({
+        id: `requestPayload:${key}`,
+        header: `请求：${key}`,
+        width: 220,
+        minWidth: 140,
+        cell: (row: ResultRow) => previewValue(row.requestPayload[key]),
+      })),
+      ...outputKeys.map((key) => ({
+        id: `output:${key}`,
+        header: `输出：${key}`,
+        width: 260,
+        minWidth: 150,
+        cell: (row: ResultRow) => previewValue(row.outputs[key]),
+      })),
       {
         id: "detail",
         header: "详情",
@@ -178,7 +185,7 @@ export default function TaskResultsPage() {
       { id: "errorType", header: "错误类型", width: 160, minWidth: 120, cell: (row) => row.errorType ?? "-" },
       { id: "errorMessage", header: "错误信息", width: 260, minWidth: 160, cell: (row) => row.errorMessage ?? "-" },
     ],
-    [inputKeys],
+    [inputKeys, outputKeys, requestPayloadKeys],
   );
 
   function download(format: "xlsx" | "csv") {
