@@ -50,13 +50,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       const outputs = parseJson<Record<string, unknown>>(row.sourceResult.outputs, {});
       return {
         rowIndex: row.rowIndex,
-        status: row.status,
         score: row.score ?? "",
         passed: row.passed ?? "",
         reason: row.reason ?? "",
-        sourceStatus: row.sourceResult.status,
         sourcePreview: Object.values(outputs).find((item) => typeof item === "string" && item.trim()) ?? "",
         reference_output: input.reference_output ?? "",
+        status: row.status,
+        sourceStatus: row.sourceResult.status,
+        errorType: row.errorType ?? "",
+        errorMessage: row.errorMessage ?? "",
       };
     });
 

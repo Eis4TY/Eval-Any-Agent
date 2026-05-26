@@ -152,6 +152,12 @@ docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compos
 docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml logs -f app
 ```
 
+Logging defaults:
+
+- Docker container logs use `json-file` rotation and keep up to `5MB x 2` per container.
+- Nginx access logs are disabled by default; `warn` and higher error logs are still retained.
+- This only limits newly generated container logs. Already oversized Docker log files require container recreation or manual Docker log cleanup to reclaim disk space.
+
 Open:
 
 ```text
@@ -323,7 +329,7 @@ http://localhost:3000/login
 Default local credentials:
 
 - Username: `admin`
-- Password: `admin`
+- Password: `DEFAULT_ADMIN_PASSWORD` in `.env`
 
 ## Keywords
 

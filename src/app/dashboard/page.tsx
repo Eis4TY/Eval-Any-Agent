@@ -34,6 +34,7 @@ import {
 import { Pagination, PaginationContent, PaginationItem, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { ModeToggle } from "@/components/mode-toggle";
 import { JsonEditor } from "@/components/json-editor";
+import { api } from "@/lib/client-api";
 
 type Dataset = {
   id: string;
@@ -58,6 +59,9 @@ type Profile = {
   doneRules: unknown[];
   doneRequired: boolean;
 };
+
+type ExtractMode = "text" | "json";
+type ExtractRuleForm = { key: string; path: string; mode?: ExtractMode };
 
 type Task = {
   id: string;
@@ -158,21 +162,24 @@ type EvaluationResultRow = {
   sourceInput: Record<string, unknown>;
 };
 
-async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
-  const json = await res.json();
-  if (!res.ok || !json.ok) throw new Error(json.message || "请求失败");
-  return json.data as T;
+const DEFAULT_EXTRACT_RULES = JSON.stringify([], null, 2);
+const DEFAULT_EVALUATOR_USER_PROMPT =
+  "请评估以下任务结果。\n输入：{{input}}\n参考答案：{{reference_output}}\n模型输出：{{outputs_json}}\n任务状态：{{result.status}}";
+
+function stringifyPreviewValue(value: unknown) {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function getReplyPreview(outputs: Record<string, unknown>) {
-  const prefer = ["text", "reply", "content", "thinking"];
-  for (const key of prefer) {
-    const value = outputs[key];
-    if (typeof value === "string" && value.trim()) return value;
-  }
   for (const value of Object.values(outputs)) {
-    if (typeof value === "string" && value.trim()) return value;
+    const preview = stringifyPreviewValue(value);
+    if (preview.trim()) return preview;
   }
   return "-";
 }
@@ -203,11 +210,11 @@ export default function DashboardPage() {
 
   const [editingProfileId, setEditingProfileId] = useState("");
   const [profileName, setProfileName] = useState("默认配置");
-  const [upstreamUrl, setUpstreamUrl] = useState("https://dingstest.133.cn/aichate");
+  const [upstreamUrl, setUpstreamUrl] = useState("https://api.example.com/chat");
   const [requestTemplate, setRequestTemplate] = useState(JSON.stringify({ msg: "{{msg}}", sessionId: "{{sessionId}}", stream: "true", channel: "Rokid" }, null, 2));
   const [headerConfig, setHeaderConfig] = useState('{"Content-Type":"application/json"}');
   const [inputBindings, setInputBindings] = useState('[{"placeholder":"msg","column":"msg"},{"placeholder":"sessionId","column":"sessionId"}]');
-  const [extractRules, setExtractRules] = useState('[{"key":"text","path":"$.text"},{"key":"thinking","path":"$.thinkcontent"}]');
+  const [extractRules, setExtractRules] = useState(DEFAULT_EXTRACT_RULES);
   const [doneRules, setDoneRules] = useState('[{"type":"sentinel_text","value":"[DONE]"},{"type":"json_path_equals","path":"$.type","equals":2}]');
   const [streamProtocol, setStreamProtocol] = useState<"auto" | "sse" | "ndjson" | "plain_text">("auto");
   const [doneStrategy, setDoneStrategy] = useState<"auto" | "manual">("auto");
@@ -248,7 +255,7 @@ export default function DashboardPage() {
   const [evaluatorProviderId, setEvaluatorProviderId] = useState("");
   const [evaluatorModel, setEvaluatorModel] = useState("gpt-4o-mini");
   const [evaluatorSystemPrompt, setEvaluatorSystemPrompt] = useState("你是一个严格的评估助手。请根据用户提供的输入、参考答案和模型输出进行评估，并返回 JSON：{\"score\": number, \"reason\": string, \"passed\": boolean}。");
-  const [evaluatorUserPrompt, setEvaluatorUserPrompt] = useState("请评估以下任务结果。\n输入：{{input}}\n参考答案：{{reference_output}}\n模型输出：{{outputs.text}}\n任务状态：{{result.status}}");
+  const [evaluatorUserPrompt, setEvaluatorUserPrompt] = useState(DEFAULT_EVALUATOR_USER_PROMPT);
   const [evaluatorThinkingEnabled, setEvaluatorThinkingEnabled] = useState(false);
   const [evaluatorScoreMin, setEvaluatorScoreMin] = useState("0");
   const [evaluatorScoreMax, setEvaluatorScoreMax] = useState("100");
@@ -282,17 +289,30 @@ export default function DashboardPage() {
     () => evaluationTasks.find((task) => task.id === evaluationTaskId),
     [evaluationTaskId, evaluationTasks],
   );
+  const extractRuleRows = useMemo<ExtractRuleForm[]>(() => {
+    try {
+      const parsed = JSON.parse(extractRules);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((rule) => ({
+        key: typeof rule?.key === "string" ? rule.key : "",
+        path: typeof rule?.path === "string" ? rule.path : "",
+        mode: rule?.mode === "json" ? "json" : "text",
+      }));
+    } catch {
+      return [];
+    }
+  }, [extractRules]);
 
   const availableExportColumns = useMemo(() => {
     const resultColumns = [
       "result:rowIndex",
-      "result:status",
       "result:ttftMs",
       "result:latencyMs",
+      "result:ruleHit",
+      "result:status",
+      "result:endReason",
       "result:errorType",
       "result:errorMessage",
-      "result:endReason",
-      "result:ruleHit",
     ];
     const inputColumns = (selectedDataset?.columns ?? []).map((col) => `input:${col}`);
     const outputColumns = (selectedProfile?.extractRules ?? []).map((rule) => `output:${rule.key}`);
@@ -302,11 +322,11 @@ export default function DashboardPage() {
   const resetProfileForm = useCallback(() => {
     setEditingProfileId("");
     setProfileName("默认配置");
-    setUpstreamUrl("https://dingstest.133.cn/aichate");
+    setUpstreamUrl("https://api.example.com/chat");
     setRequestTemplate(JSON.stringify({ msg: "{{msg}}", sessionId: "{{sessionId}}", stream: "true", channel: "Rokid" }, null, 2));
     setHeaderConfig('{"Content-Type":"application/json"}');
     setInputBindings('[{"placeholder":"msg","column":"msg"},{"placeholder":"sessionId","column":"sessionId"}]');
-    setExtractRules('[{"key":"text","path":"$.text"},{"key":"thinking","path":"$.thinkcontent"}]');
+    setExtractRules(DEFAULT_EXTRACT_RULES);
     setDoneRules('[{"type":"sentinel_text","value":"[DONE]"},{"type":"json_path_equals","path":"$.type","equals":2}]');
     setStreamProtocol("auto");
     setDoneStrategy("auto");
@@ -328,7 +348,7 @@ export default function DashboardPage() {
     setEvaluatorProviderId(providers[0]?.id ?? "");
     setEvaluatorModel(providers[0]?.defaultModel ?? "gpt-4o-mini");
     setEvaluatorSystemPrompt("你是一个严格的评估助手。请根据用户提供的输入、参考答案和模型输出进行评估，并返回 JSON：{\"score\": number, \"reason\": string, \"passed\": boolean}。");
-    setEvaluatorUserPrompt("请评估以下任务结果。\n输入：{{input}}\n参考答案：{{reference_output}}\n模型输出：{{outputs.text}}\n任务状态：{{result.status}}");
+    setEvaluatorUserPrompt(DEFAULT_EVALUATOR_USER_PROMPT);
     setEvaluatorThinkingEnabled(false);
     setEvaluatorScoreMin("0");
     setEvaluatorScoreMax("100");
@@ -467,10 +487,13 @@ export default function DashboardPage() {
     if (!selectedTask || selectedExportColumns.length > 0) return;
     const defaults = [
       ...(selectedDataset?.columns ?? []).map((col) => `input:${col}`),
-      "result:status",
       "result:ttftMs",
       "result:latencyMs",
       ...((selectedProfile?.extractRules ?? []).map((rule) => `output:${rule.key}`)),
+      "result:status",
+      "result:endReason",
+      "result:errorType",
+      "result:errorMessage",
     ];
     queueMicrotask(() => {
       setSelectedExportColumns(defaults.length > 0 ? defaults : ["result:rowIndex", "result:status"]);
@@ -478,7 +501,7 @@ export default function DashboardPage() {
   }, [selectedDataset, selectedExportColumns.length, selectedProfile, selectedTask]);
 
   useEffect(() => {
-    if (!previewTaskId) return;
+    if (activeTab !== "tasks" || !previewTaskId) return;
     queueMicrotask(() => {
       loadLivePreview().catch((e) => toast.error(e.message));
     });
@@ -486,7 +509,7 @@ export default function DashboardPage() {
       loadLivePreview().catch((e) => toast.error(e.message));
     }, 2000);
     return () => clearInterval(timer);
-  }, [loadLivePreview, previewTaskId]);
+  }, [activeTab, loadLivePreview, previewTaskId]);
 
   useEffect(() => {
     if (activeTab !== "tasks") return;
@@ -526,7 +549,7 @@ export default function DashboardPage() {
   async function saveProfile() {
     let parsedHeaders: Record<string, string>;
     let parsedBindings: Array<{ placeholder: string; column: string }>;
-    let parsedExtractRules: Array<{ key: string; path: string; mode?: "text" | "json" }>;
+    let parsedExtractRules: ExtractRuleForm[];
     let parsedDoneRules: unknown[];
 
     try {
@@ -536,6 +559,25 @@ export default function DashboardPage() {
       parsedDoneRules = JSON.parse(doneRules);
     } catch {
       toast.error("配置 JSON 格式错误，请检查 Header/Bindings/Rules");
+      return;
+    }
+
+    if (!Array.isArray(parsedExtractRules)) {
+      toast.error("输出字段配置必须是数组");
+      return;
+    }
+    const invalidRule = parsedExtractRules.find((rule) => !rule.key?.trim() || !rule.path?.trim());
+    if (invalidRule) {
+      toast.error("输出字段的字段名和 JSONPath 不能为空");
+      return;
+    }
+    if (parsedExtractRules.some((rule) => rule.path.trim() === "$.")) {
+      toast.error('输出字段 JSONPath 不能是 "$."，请写成 "$.answer" 这类完整路径');
+      return;
+    }
+    const ruleKeys = parsedExtractRules.map((rule) => rule.key.trim());
+    if (new Set(ruleKeys).size !== ruleKeys.length) {
+      toast.error("输出字段名不能重复");
       return;
     }
 
@@ -613,6 +655,26 @@ export default function DashboardPage() {
       const message = error instanceof Error ? error.message : "JSON 格式化失败";
       toast.error(message);
     }
+  }
+
+  function setExtractRuleRows(rows: ExtractRuleForm[]) {
+    setExtractRules(JSON.stringify(rows, null, 2));
+  }
+
+  function updateExtractRule(index: number, patch: Partial<ExtractRuleForm>) {
+    setExtractRuleRows(
+      extractRuleRows.map((rule, currentIndex) =>
+        currentIndex === index ? { ...rule, ...patch } : rule,
+      ),
+    );
+  }
+
+  function addExtractRule() {
+    setExtractRuleRows([...extractRuleRows, { key: "", path: "$.answer", mode: "text" }]);
+  }
+
+  function removeExtractRule(index: number) {
+    setExtractRuleRows(extractRuleRows.filter((_, currentIndex) => currentIndex !== index));
   }
 
   async function duplicateProfile(profileId: string) {
@@ -1212,12 +1274,69 @@ export default function DashboardPage() {
 
                   <div className="space-y-4 rounded-lg border p-4">
                     <div className="space-y-2">
-                      <div className="text-sm font-medium">提取规则 extract_rules</div>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-sm font-medium">API 输出字段</div>
+                        <Button type="button" variant="outline" size="sm" onClick={addExtractRule}>添加输出字段</Button>
+                      </div>
+                      <div className="rounded-md border">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>字段名</TableHead>
+                              <TableHead>JSONPath</TableHead>
+                              <TableHead>提取方式</TableHead>
+                              <TableHead className="w-[96px]">操作</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {extractRuleRows.map((rule, index) => (
+                              <TableRow key={index}>
+                                <TableCell>
+                                  <Input
+                                    value={rule.key}
+                                    onChange={(e) => updateExtractRule(index, { key: e.target.value })}
+                                    placeholder="answer"
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  <Input
+                                    value={rule.path}
+                                    onChange={(e) => updateExtractRule(index, { path: e.target.value })}
+                                    placeholder="$.choices[0].delta.content"
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  <Select
+                                    value={rule.mode ?? "text"}
+                                    onValueChange={(value) => updateExtractRule(index, { mode: value as ExtractMode })}
+                                  >
+                                    <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="text">text</SelectItem>
+                                      <SelectItem value="json">json</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </TableCell>
+                                <TableCell>
+                                  <Button type="button" variant="outline" size="sm" onClick={() => removeExtractRule(index)}>移除</Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                            {extractRuleRows.length === 0 ? (
+                              <TableRow>
+                                <TableCell colSpan={4} className="h-20 text-center text-sm text-muted-foreground">
+                                  尚未配置输出字段，Dry Run 会保留原始 trace 供你确定 JSONPath。
+                                </TableCell>
+                              </TableRow>
+                            ) : null}
+                          </TableBody>
+                        </Table>
+                      </div>
                       <JsonEditor
                         ariaLabel="提取规则 JSON"
                         value={extractRules}
                         onChange={setExtractRules}
-                        rows={10}
+                        rows={8}
                       />
                     </div>
                     <div className="space-y-3">
@@ -1460,8 +1579,8 @@ export default function DashboardPage() {
                       <TableHead>任务ID</TableHead>
                       <TableHead>数据集/配置</TableHead>
                       <TableHead>创建时间</TableHead>
-                      <TableHead>状态</TableHead>
                       <TableHead>进度</TableHead>
+                      <TableHead>状态</TableHead>
                       <TableHead>操作</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1474,8 +1593,8 @@ export default function DashboardPage() {
                           <TableCell className="font-mono text-xs">{task.id.slice(0, 12)}</TableCell>
                           <TableCell>{task.dataset.name} / {task.profile.name}</TableCell>
                           <TableCell className="whitespace-nowrap">{formatDateTime(task.createdAt)}</TableCell>
-                          <TableCell><Badge>{task.status}</Badge></TableCell>
                           <TableCell className="w-[220px]"><Progress value={pct} /></TableCell>
+                          <TableCell><Badge>{task.status}</Badge></TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               {!isFinished ? (
@@ -1564,18 +1683,18 @@ export default function DashboardPage() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>行号</TableHead>
-                          <TableHead>状态</TableHead>
                           <TableHead>延迟(ms)</TableHead>
                           <TableHead>回复内容</TableHead>
+                          <TableHead>状态</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {liveRows.map((row) => (
                           <TableRow key={row.id}>
                             <TableCell>{row.rowIndex}</TableCell>
-                            <TableCell><Badge variant={row.status === "failed" ? "destructive" : "secondary"}>{row.status}</Badge></TableCell>
                             <TableCell>{row.latencyMs ?? "-"}</TableCell>
                             <TableCell className="max-w-[620px] truncate">{getReplyPreview(row.outputs)}</TableCell>
+                            <TableCell><Badge variant={row.status === "failed" ? "destructive" : "secondary"}>{row.status}</Badge></TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -1666,23 +1785,21 @@ export default function DashboardPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>#</TableHead>
-                      <TableHead>状态</TableHead>
                       <TableHead>TTFT(ms)</TableHead>
                       <TableHead>总耗时(ms)</TableHead>
-                      <TableHead>结束原因</TableHead>
-                      <TableHead>错误</TableHead>
                       <TableHead>详情</TableHead>
+                      <TableHead>状态</TableHead>
+                      <TableHead>结束原因</TableHead>
+                      <TableHead>错误类型</TableHead>
+                      <TableHead>错误信息</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {resultRows.map((row) => (
                       <TableRow key={row.id}>
                         <TableCell>{row.rowIndex}</TableCell>
-                        <TableCell><Badge variant={row.status === "failed" ? "destructive" : "secondary"}>{row.status}</Badge></TableCell>
                         <TableCell>{row.ttftMs ?? "-"}</TableCell>
                         <TableCell>{row.latencyMs ?? "-"}</TableCell>
-                        <TableCell>{row.endReason ?? "-"}</TableCell>
-                        <TableCell>{row.errorType ?? "-"}</TableCell>
                         <TableCell>
                           <Button
                             size="sm"
@@ -1695,6 +1812,10 @@ export default function DashboardPage() {
                             查看
                           </Button>
                         </TableCell>
+                        <TableCell><Badge variant={row.status === "failed" ? "destructive" : "secondary"}>{row.status}</Badge></TableCell>
+                        <TableCell>{row.endReason ?? "-"}</TableCell>
+                        <TableCell>{row.errorType ?? "-"}</TableCell>
+                        <TableCell className="max-w-[260px] truncate">{row.errorMessage ?? "-"}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -2007,9 +2128,9 @@ export default function DashboardPage() {
                         <TableRow>
                           <TableHead>评估器</TableHead>
                           <TableHead>来源任务</TableHead>
-                          <TableHead>状态</TableHead>
                           <TableHead>进度</TableHead>
                           <TableHead>创建时间</TableHead>
+                          <TableHead>状态</TableHead>
                           <TableHead>操作</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -2024,9 +2145,9 @@ export default function DashboardPage() {
                             <TableRow key={task.id}>
                               <TableCell>{task.evaluator?.name ?? "-"}</TableCell>
                               <TableCell>{task.sourceTask?.dataset?.name ?? "-"} / {task.sourceTask?.profile?.name ?? "-"}</TableCell>
-                              <TableCell><Badge>{task.status}</Badge></TableCell>
                               <TableCell className="w-[220px]"><Progress value={evaluationProgress} /></TableCell>
                               <TableCell>{formatDateTime(task.createdAt)}</TableCell>
+                              <TableCell><Badge>{task.status}</Badge></TableCell>
                               <TableCell>
                                 <div className="flex items-center gap-2">
                                   <Button size="sm" variant="outline" asChild>
@@ -2097,25 +2218,24 @@ export default function DashboardPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>#</TableHead>
-                      <TableHead>状态</TableHead>
                       <TableHead>评分</TableHead>
                       <TableHead>是否通过</TableHead>
                       <TableHead>原因</TableHead>
                       <TableHead>来源输出摘要</TableHead>
-                      <TableHead>错误</TableHead>
                       <TableHead>详情</TableHead>
+                      <TableHead>状态</TableHead>
+                      <TableHead>错误类型</TableHead>
+                      <TableHead>错误信息</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {evaluationResultRows.map((row) => (
                       <TableRow key={row.id}>
                         <TableCell>{row.rowIndex}</TableCell>
-                        <TableCell><Badge variant={row.status === "failed" ? "destructive" : "secondary"}>{row.status}</Badge></TableCell>
                         <TableCell>{row.score ?? "-"}</TableCell>
                         <TableCell>{row.passed == null ? "-" : row.passed ? "🟢" : "❌"}</TableCell>
                         <TableCell className="max-w-[320px] truncate">{row.reason ?? "-"}</TableCell>
                         <TableCell className="max-w-[320px] truncate">{getReplyPreview(row.sourceOutputs)}</TableCell>
-                        <TableCell>{row.errorType ?? "-"}</TableCell>
                         <TableCell>
                           <Button
                             size="sm"
@@ -2128,6 +2248,9 @@ export default function DashboardPage() {
                             查看
                           </Button>
                         </TableCell>
+                        <TableCell><Badge variant={row.status === "failed" ? "destructive" : "secondary"}>{row.status}</Badge></TableCell>
+                        <TableCell>{row.errorType ?? "-"}</TableCell>
+                        <TableCell className="max-w-[260px] truncate">{row.errorMessage ?? "-"}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

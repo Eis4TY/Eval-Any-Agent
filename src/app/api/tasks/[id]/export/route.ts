@@ -85,12 +85,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       const inputData = parseJson<Record<string, unknown>>(row.inputData, {});
       const out: Record<string, unknown> = {
         rowIndex: row.rowIndex,
-        status: row.status,
         ttftMs: row.ttftMs,
         latencyMs: row.latencyMs,
-        errorType: row.errorType,
-        errorMessage: row.errorMessage,
-        endReason: row.endReason,
         ruleHit: row.ruleHit,
       };
 
@@ -105,6 +101,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       for (const rule of extractRules) {
         out[rule.key] = outputs[rule.key] ?? "";
       }
+      out.status = row.status;
+      out.endReason = row.endReason;
+      out.errorType = row.errorType;
+      out.errorMessage = row.errorMessage;
       return out;
     });
     const ttftValues = results.map((r) => r.ttftMs).filter((v): v is number => typeof v === "number");

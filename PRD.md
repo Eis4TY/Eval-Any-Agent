@@ -68,7 +68,7 @@
 
 请求体
 ```json
-curl --location --request POST 'https://dingstest.133.cn/aichate' \
+curl --location --request POST 'https://api.example.com/chat' \
 --header 'Content-Type: application/json' \
 --data-raw '{
   "msg": "你好",

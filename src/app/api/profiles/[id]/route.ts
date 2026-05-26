@@ -11,7 +11,17 @@ const schema = z.object({
   requestTemplate: z.string().min(2),
   headers: z.record(z.string(), z.string()).default({}),
   inputBindings: z.array(z.object({ placeholder: z.string(), column: z.string() })).default([]),
-  extractRules: z.array(z.object({ key: z.string(), path: z.string(), mode: z.enum(["text", "json"]).optional() })).default([]),
+  extractRules: z
+    .array(
+      z.object({
+        key: z.string().trim().min(1),
+        path: z.string().trim().min(1).refine((value) => value !== "$.", {
+          message: 'JSONPath 不能是 "$."',
+        }),
+        mode: z.enum(["text", "json"]).default("text"),
+      }),
+    )
+    .default([]),
   expectedSchema: z.any().optional(),
   streamProtocol: z.enum(["auto", "sse", "ndjson", "plain_text"]).default("auto"),
   doneStrategy: z.enum(["auto", "manual"]).default("auto"),

@@ -586,7 +586,7 @@ http://localhost:3000/login
 默认账号：
 
 - 用户名：`admin`
-- 密码：`admin`
+- 密码：`.env` 中的 `DEFAULT_ADMIN_PASSWORD`
 
 ## 运维命令速查
 
@@ -602,6 +602,12 @@ docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compos
 docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml logs -f app
 docker compose --env-file env/.env.docker -f docker-compose.yml -f docker-compose.deploy.yml logs -f nginx
 ```
+
+日志说明：
+
+- Docker 容器日志默认使用 `json-file` 轮转，每个容器最多保留 `5MB x 2`。
+- Nginx 普通访问日志默认关闭，仅保留 `warn` 及以上错误日志。
+- 该配置只限制新产生的容器日志；已经膨胀的旧日志需要重建容器或手动清理 Docker 日志文件后才会释放空间。
 
 重启：
 

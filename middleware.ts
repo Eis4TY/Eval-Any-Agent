@@ -3,13 +3,20 @@ import type { NextRequest } from "next/server";
 import { jwtVerify } from "jose";
 
 const AUTH_COOKIE = "eval_agent_session";
-const secret = new TextEncoder().encode(process.env.AUTH_SECRET || "dev-secret-change-me");
+
+function getAuthSecret() {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new Error("AUTH_SECRET is required in production");
+  }
+  return new TextEncoder().encode(secret || "local-dev-auth-secret");
+}
 
 async function hasValidToken(req: NextRequest): Promise<boolean> {
   const token = req.cookies.get(AUTH_COOKIE)?.value;
   if (!token) return false;
   try {
-    await jwtVerify(token, secret);
+    await jwtVerify(token, getAuthSecret());
     return true;
   } catch {
     return false;
@@ -22,6 +29,7 @@ export async function middleware(req: NextRequest) {
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
+    pathname.startsWith("/api/health") ||
     pathname.startsWith("/api/auth/login")
   ) {
     return NextResponse.next();

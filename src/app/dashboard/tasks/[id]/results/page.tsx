@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ResultsDataTable, type ResultsTableColumn } from "@/components/results-data-table";
+import { api } from "@/lib/client-api";
 
 type TaskDetail = {
   id: string;
@@ -36,13 +37,6 @@ type ResultRow = {
   endReason: string | null;
   ruleHit: string | null;
 };
-
-async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
-  const json = await res.json();
-  if (!res.ok || !json.ok) throw new Error(json.message || "请求失败");
-  return json.data as T;
-}
 
 function previewValue(value: unknown) {
   if (value == null) return "-";
@@ -74,15 +68,6 @@ function getStructuredKeys<T>(
 ) {
   const discovered = rows.flatMap((row) => Object.keys(accessor(row)).filter((key) => !isEmptyColumnName(key)));
   return Array.from(new Set([...configuredColumns, ...discovered]));
-}
-
-function outputPreview(outputs: Record<string, unknown>) {
-  const keys = ["text", "reply", "content", "thinking"];
-  for (const key of keys) {
-    const value = outputs[key];
-    if (typeof value === "string" && value.trim()) return value;
-  }
-  return previewValue(outputs);
 }
 
 function formatDateTime(value: string) {
@@ -142,30 +127,35 @@ export default function TaskResultsPage() {
     () => getStructuredKeys(parseColumnNames(task?.dataset.columns), rows, (row) => row.inputData),
     [rows, task?.dataset.columns],
   );
+  const requestPayloadKeys = useMemo(() => getStructuredKeys([], rows, (row) => row.requestPayload), [rows]);
+  const outputKeys = useMemo(() => getStructuredKeys([], rows, (row) => row.outputs), [rows]);
 
   const columns = useMemo<ResultsTableColumn<ResultRow>[]>(
     () => [
       { id: "rowIndex", header: "行号", width: 90, minWidth: 80, cell: (row) => row.rowIndex },
-      {
-        id: "status",
-        header: "状态",
-        width: 120,
-        minWidth: 100,
-        cell: (row) => <Badge variant={row.status === "failed" ? "destructive" : "secondary"}>{row.status}</Badge>,
-      },
       { id: "ttftMs", header: "TTFT(ms)", width: 120, minWidth: 100, cell: (row) => row.ttftMs ?? "-" },
       { id: "latencyMs", header: "总耗时(ms)", width: 130, minWidth: 110, cell: (row) => row.latencyMs ?? "-" },
-      { id: "endReason", header: "结束原因", width: 180, minWidth: 120, cell: (row) => row.endReason ?? "-" },
-      { id: "errorType", header: "错误类型", width: 160, minWidth: 120, cell: (row) => row.errorType ?? "-" },
-      { id: "errorMessage", header: "错误信息", width: 260, minWidth: 160, cell: (row) => row.errorMessage ?? "-" },
       ...inputKeys.map((key) => ({
         id: `input:${key}`,
-        header: key,
+        header: `输入：${key}`,
         width: 220,
         minWidth: 140,
         cell: (row: ResultRow) => previewValue(row.inputData[key]),
       })),
-      { id: "outputs", header: "提取输出摘要", width: 320, minWidth: 180, cell: (row) => outputPreview(row.outputs) },
+      ...requestPayloadKeys.map((key) => ({
+        id: `requestPayload:${key}`,
+        header: `请求：${key}`,
+        width: 220,
+        minWidth: 140,
+        cell: (row: ResultRow) => previewValue(row.requestPayload[key]),
+      })),
+      ...outputKeys.map((key) => ({
+        id: `output:${key}`,
+        header: `输出：${key}`,
+        width: 260,
+        minWidth: 150,
+        cell: (row: ResultRow) => previewValue(row.outputs[key]),
+      })),
       {
         id: "detail",
         header: "详情",
@@ -184,8 +174,18 @@ export default function TaskResultsPage() {
           </Button>
         ),
       },
+      {
+        id: "status",
+        header: "状态",
+        width: 120,
+        minWidth: 100,
+        cell: (row) => <Badge variant={row.status === "failed" ? "destructive" : "secondary"}>{row.status}</Badge>,
+      },
+      { id: "endReason", header: "结束原因", width: 180, minWidth: 120, cell: (row) => row.endReason ?? "-" },
+      { id: "errorType", header: "错误类型", width: 160, minWidth: 120, cell: (row) => row.errorType ?? "-" },
+      { id: "errorMessage", header: "错误信息", width: 260, minWidth: 160, cell: (row) => row.errorMessage ?? "-" },
     ],
-    [inputKeys],
+    [inputKeys, outputKeys, requestPayloadKeys],
   );
 
   function download(format: "xlsx" | "csv") {
