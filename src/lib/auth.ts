@@ -4,7 +4,14 @@ import { prisma } from "@/lib/prisma";
 import { hashPassword, verifyPassword } from "@/lib/password";
 
 const COOKIE_NAME = "eval_agent_session";
-const secret = new TextEncoder().encode(process.env.AUTH_SECRET || "dev-secret-change-me");
+
+function getAuthSecret() {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new Error("AUTH_SECRET is required in production");
+  }
+  return new TextEncoder().encode(secret || "local-dev-auth-secret");
+}
 
 type SessionPayload = {
   uid: string;
@@ -38,7 +45,7 @@ export async function login(username: string, password: string): Promise<boolean
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("7d")
-    .sign(secret);
+    .sign(getAuthSecret());
 
   const cookieStore = await cookies();
   cookieStore.set(COOKIE_NAME, token, {
@@ -61,7 +68,7 @@ export async function getSession(): Promise<SessionPayload | null> {
   const token = cookieStore.get(COOKIE_NAME)?.value;
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, secret);
+    const { payload } = await jwtVerify(token, getAuthSecret());
     if (!payload.uid || !payload.username) return null;
     const uid = String(payload.uid);
     const username = String(payload.username);

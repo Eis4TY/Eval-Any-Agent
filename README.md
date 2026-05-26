@@ -586,7 +586,7 @@ http://localhost:3000/login
 默认账号：
 
 - 用户名：`admin`
-- 密码：`admin`
+- 密码：`.env` 中的 `DEFAULT_ADMIN_PASSWORD`
 
 ## 运维命令速查
 

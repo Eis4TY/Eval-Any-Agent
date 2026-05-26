@@ -4,6 +4,7 @@ import { parseJson } from "@/lib/json";
 export type EvaluationTemplateContext = {
   input: Record<string, unknown>;
   outputs: Record<string, unknown>;
+  outputs_json: string;
   result: {
     status: string;
     ttftMs: number | null;
@@ -34,6 +35,7 @@ export function buildEvaluationContext(sourceResult: {
   const context: EvaluationTemplateContext = {
     input,
     outputs,
+    outputs_json: JSON.stringify(outputs, null, 2),
     result: {
       status: sourceResult.status,
       ttftMs: sourceResult.ttftMs,

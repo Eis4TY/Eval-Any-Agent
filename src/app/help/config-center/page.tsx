@@ -72,32 +72,32 @@ export default function ConfigCenterHelpPage() {
               <AccordionItem value="extract">
                 <AccordionTrigger>4. 提取规则 extract_rules</AccordionTrigger>
                 <AccordionContent className="space-y-3 text-sm leading-6">
-                  <p>提取规则用于从返回 JSON 里取值。</p>
-                  <p>每条规则常用两个字段：</p>
+                  <p>提取规则用于由用户指定 API 返回里哪些内容要保存成输出字段。</p>
+                  <p>每条规则常用三个字段：</p>
                   <p>- <code>key</code>：结果列名</p>
                   <p>- <code>path</code>：取值路径</p>
+                  <p>- <code>mode</code>：<code>text</code> 会把多段流式内容拼接为字符串，<code>json</code> 会保留 JSON 值</p>
                   <p><code>path</code> 使用 JSONPath。这里的 <code>$</code> 表示“整个返回 JSON 的根节点”。</p>
-                  <p>例如 <code>$.text</code> 表示取根节点下的 <code>text</code>；<code>$.data.answer</code> 表示取 <code>data</code> 里的 <code>answer</code>。</p>
+                  <p>例如 <code>$.data.answer</code> 表示取 <code>data</code> 里的 <code>answer</code>；OpenAI 兼容流式接口常见路径是 <code>$.choices[0].delta.content</code>。</p>
                   <p>示例：</p>
                   <pre className="rounded border bg-muted p-3 text-xs">
                     {`[
-  { "key": "text", "path": "$.text" },
-  { "key": "thinking", "path": "$.thinkcontent" }
+  { "key": "answer", "path": "$.data.answer", "mode": "text" },
+  { "key": "traceId", "path": "$.meta.traceId", "mode": "json" }
 ]`}
                   </pre>
                   <p>这表示：</p>
-                  <p>- 把 <code>$.text</code> 保存到列 <code>text</code></p>
-                  <p>- 把 <code>$.thinkcontent</code> 保存到列 <code>thinking</code></p>
-                  <p>如果层级更深，可以这样写：</p>
+                  <p>- 把 <code>$.data.answer</code> 拼接保存到输出字段 <code>answer</code></p>
+                  <p>- 把 <code>$.meta.traceId</code> 按 JSON 值保存到输出字段 <code>traceId</code></p>
+                  <p>如果是纯文本或无法解析成 JSON 的返回，可以这样写：</p>
                   <pre className="rounded border bg-muted p-3 text-xs">
                     {`[
-  { "key": "answer", "path": "$.data.answer" },
-  { "key": "traceId", "path": "$.meta.traceId" }
+  { "key": "answer", "path": "$.text", "mode": "text" }
 ]`}
                   </pre>
                   <p>推荐做法：</p>
                   <p>1) 先 Dry Run，看真实返回。</p>
-                  <p>2) 先写 1 条最确定的路径，比如 <code>$.text</code>。</p>
+                  <p>2) 先写 1 条最确定的路径，比如 <code>$.data.answer</code>。</p>
                   <p>3) 成功后再补其他字段。</p>
                   <p>如果提取不到值，优先检查：</p>
                   <p>- 路径是否写错</p>

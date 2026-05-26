@@ -323,7 +323,7 @@ http://localhost:3000/login
 Default local credentials:
 
 - Username: `admin`
-- Password: `admin`
+- Password: `DEFAULT_ADMIN_PASSWORD` in `.env`
 
 ## Keywords
 

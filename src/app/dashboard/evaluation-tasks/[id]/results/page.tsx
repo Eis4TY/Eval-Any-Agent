@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ResultsDataTable, type ResultsTableColumn } from "@/components/results-data-table";
+import { api } from "@/lib/client-api";
 
 type EvaluationTaskDetail = {
   id: string;
@@ -42,13 +43,6 @@ type EvaluationResultRow = {
   sourceOutputs: Record<string, unknown>;
   sourceInput: Record<string, unknown>;
 };
-
-async function api<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
-  const json = await res.json();
-  if (!res.ok || !json.ok) throw new Error(json.message || "请求失败");
-  return json.data as T;
-}
 
 function previewValue(value: unknown) {
   if (value == null) return "-";
@@ -83,10 +77,9 @@ function getStructuredKeys<T>(
 }
 
 function outputPreview(outputs: Record<string, unknown>) {
-  const keys = ["text", "reply", "content", "thinking"];
-  for (const key of keys) {
-    const value = outputs[key];
-    if (typeof value === "string" && value.trim()) return value;
+  for (const value of Object.values(outputs)) {
+    const preview = previewValue(value);
+    if (preview.trim() && preview !== "{}" && preview !== "[]") return preview;
   }
   return previewValue(outputs);
 }
@@ -162,13 +155,6 @@ export default function EvaluationTaskResultsPage() {
   const columns = useMemo<ResultsTableColumn<EvaluationResultRow>[]>(
     () => [
       { id: "rowIndex", header: "行号", width: 90, minWidth: 80, cell: (row) => row.rowIndex },
-      {
-        id: "status",
-        header: "状态",
-        width: 120,
-        minWidth: 100,
-        cell: (row) => <Badge variant={row.status === "failed" ? "destructive" : "secondary"}>{row.status}</Badge>,
-      },
       { id: "score", header: "评分", width: 100, minWidth: 90, cell: (row) => row.score ?? "-" },
       {
         id: "passed",
@@ -187,8 +173,6 @@ export default function EvaluationTaskResultsPage() {
       })),
       { id: "sourceOutputs", header: "来源输出摘要", width: 320, minWidth: 180, cell: (row) => outputPreview(row.sourceOutputs) },
       { id: "rawResponse", header: "工具调用/原始响应", width: 320, minWidth: 180, cell: (row) => row.rawResponse ?? "-" },
-      { id: "errorType", header: "错误类型", width: 160, minWidth: 120, cell: (row) => row.errorType ?? "-" },
-      { id: "errorMessage", header: "错误信息", width: 260, minWidth: 160, cell: (row) => row.errorMessage ?? "-" },
       {
         id: "detail",
         header: "详情",
@@ -207,6 +191,15 @@ export default function EvaluationTaskResultsPage() {
           </Button>
         ),
       },
+      {
+        id: "status",
+        header: "状态",
+        width: 120,
+        minWidth: 100,
+        cell: (row) => <Badge variant={row.status === "failed" ? "destructive" : "secondary"}>{row.status}</Badge>,
+      },
+      { id: "errorType", header: "错误类型", width: 160, minWidth: 120, cell: (row) => row.errorType ?? "-" },
+      { id: "errorMessage", header: "错误信息", width: 260, minWidth: 160, cell: (row) => row.errorMessage ?? "-" },
     ],
     [sourceInputKeys],
   );
