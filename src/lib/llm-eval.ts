@@ -26,9 +26,30 @@ function extractJsonObject(text: string) {
   const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   if (fencedMatch?.[1]) return fencedMatch[1].trim();
 
+  // Models may append an explanation after the JSON object. Find the first
+  // balanced object instead of using the last closing brace, which can pull
+  // the explanation into the JSON and cause a false evaluator failure.
   const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start >= 0 && end > start) return text.slice(start, end + 1);
+  if (start >= 0) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === "{") depth += 1;
+      else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) return text.slice(start, index + 1);
+      }
+    }
+  }
   return text;
 }
 
@@ -63,9 +84,14 @@ export async function evaluateByLlm(input: EvaluateByLlmInput): Promise<Evaluate
     throw new Error(`模型返回内容不是合法 JSON：${message}`);
   }
   const result = evaluationResponseSchema.parse(parsed);
+  // Evaluators sometimes return a normalized score in the 0..1 range even
+  // though the app's score contract is 0..100. Normalize at the boundary so
+  // storage, pass/fail thresholds, averages, and exports use one scale.
+  const score = result.score >= 0 && result.score <= 1 ? result.score * 100 : result.score;
 
   return {
     ...result,
+    score,
     rawResponse,
   };
 }

@@ -39,6 +39,8 @@ CREATE TABLE "MappingProfile" (
     "doneRequired" BOOLEAN NOT NULL DEFAULT false,
     "timeoutMs" INTEGER NOT NULL DEFAULT 60000,
     "retryCount" INTEGER NOT NULL DEFAULT 2,
+    "conversationIdMode" TEXT NOT NULL DEFAULT 'preserve',
+    "conversationIdEvery" INTEGER NOT NULL DEFAULT 1,
     "idleTimeoutMs" INTEGER NOT NULL DEFAULT 15000,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL,
@@ -56,6 +58,8 @@ CREATE TABLE "EvalTask" (
     "concurrency" INTEGER NOT NULL,
     "timeoutMs" INTEGER NOT NULL,
     "retryCount" INTEGER NOT NULL,
+    "conversationIdMode" TEXT NOT NULL DEFAULT 'preserve',
+    "conversationIdEvery" INTEGER NOT NULL DEFAULT 1,
     "totalRows" INTEGER NOT NULL,
     "successRows" INTEGER NOT NULL DEFAULT 0,
     "failedRows" INTEGER NOT NULL DEFAULT 0,
@@ -163,6 +167,32 @@ CREATE TABLE "EvaluationResult" (
     CONSTRAINT "EvaluationResult_sourceResultId_fkey" FOREIGN KEY ("sourceResultId") REFERENCES "EvalResult" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 
+-- CreateTable
+CREATE TABLE "ScheduledTask" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "userId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "datasetId" TEXT NOT NULL,
+    "profileId" TEXT NOT NULL,
+    "concurrency" INTEGER NOT NULL DEFAULT 20,
+    "timeoutMs" INTEGER NOT NULL DEFAULT 60000,
+    "retryCount" INTEGER NOT NULL DEFAULT 2,
+    "scheduleType" TEXT NOT NULL,
+    "conversationIdMode" TEXT NOT NULL DEFAULT 'preserve',
+    "conversationIdEvery" INTEGER NOT NULL DEFAULT 1,
+    "cronExpr" TEXT,
+    "intervalMs" INTEGER,
+    "timezone" TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+    "enabled" BOOLEAN NOT NULL DEFAULT true,
+    "lastRunAt" DATETIME,
+    "nextRunAt" DATETIME NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "ScheduledTask_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "ScheduledTask_datasetId_fkey" FOREIGN KEY ("datasetId") REFERENCES "Dataset" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "ScheduledTask_profileId_fkey" FOREIGN KEY ("profileId") REFERENCES "MappingProfile" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "User_username_key" ON "User"("username");
 
@@ -216,3 +246,5 @@ CREATE INDEX "EvaluationResult_sourceResultId_idx" ON "EvaluationResult"("source
 
 -- CreateIndex
 CREATE INDEX "EvaluationResult_rowIndex_idx" ON "EvaluationResult"("rowIndex");
+
+CREATE INDEX "ScheduledTask_userId_enabled_nextRunAt_idx" ON "ScheduledTask"("userId", "enabled", "nextRunAt");

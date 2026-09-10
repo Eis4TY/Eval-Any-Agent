@@ -1,0 +1,3 @@
+import { requireSession } from "@/lib/auth"; import { fail, ok } from "@/lib/http"; import { prisma } from "@/lib/prisma";
+export async function PATCH(req:Request,{params}:{params:Promise<{id:string}>}){try{const s=await requireSession();const {id}=await params;const body=await req.json();const r=await prisma.scheduledTask.updateMany({where:{id,userId:s.uid},data:{enabled:body.enabled}});return r.count?ok(r):fail("定时任务不存在",404)}catch{return fail("更新失败",400)}}
+export async function DELETE(_:Request,{params}:{params:Promise<{id:string}>}){try{const s=await requireSession();const {id}=await params;await prisma.scheduledTask.deleteMany({where:{id,userId:s.uid}});return ok({})}catch{return fail("删除失败",400)}}

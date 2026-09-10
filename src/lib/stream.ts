@@ -143,7 +143,8 @@ export async function runStreamRequest(input: StreamRunInput): Promise<StreamRun
     });
 
     if (!response.ok) {
-      throw new Error(`HTTP_${response.status}`);
+      const detail = (await response.text()).trim();
+      throw new Error(`HTTP_${response.status}${detail ? `: ${detail.slice(0, 240)}` : ""}`);
     }
 
     const contentType = response.headers.get("content-type") ?? "";
