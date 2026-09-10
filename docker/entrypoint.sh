@@ -68,11 +68,6 @@ if [ "$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM pragma_table_info('EvalTask') W
   sqlite3 "$DB_PATH" 'ALTER TABLE "EvalTask" ADD COLUMN "conversationIdMode" TEXT NOT NULL DEFAULT "preserve"; ALTER TABLE "EvalTask" ADD COLUMN "conversationIdEvery" INTEGER NOT NULL DEFAULT 1;'
 fi
 
-if [ "$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM pragma_table_info('ScheduledTask') WHERE name='conversationIdMode';")" = "0" ]; then
-  echo "[entrypoint] adding scheduled conversation ID strategy columns..."
-  sqlite3 "$DB_PATH" 'ALTER TABLE "ScheduledTask" ADD COLUMN "conversationIdMode" TEXT NOT NULL DEFAULT "preserve"; ALTER TABLE "ScheduledTask" ADD COLUMN "conversationIdEvery" INTEGER NOT NULL DEFAULT 1;'
-fi
-
 if [ "$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM pragma_table_info('Evaluator') WHERE name='thinkingEnabled';")" = "0" ]; then
   echo "[entrypoint] adding missing Evaluator.thinkingEnabled column..."
   sqlite3 "$DB_PATH" 'ALTER TABLE "Evaluator" ADD COLUMN "thinkingEnabled" BOOLEAN NOT NULL DEFAULT false;'
@@ -95,6 +90,11 @@ CREATE TABLE "ScheduledTask" (
 );
 CREATE INDEX "ScheduledTask_userId_enabled_nextRunAt_idx" ON "ScheduledTask"("userId", "enabled", "nextRunAt");
 SQL
+fi
+
+if [ "$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM pragma_table_info('ScheduledTask') WHERE name='conversationIdMode';")" = "0" ]; then
+  echo "[entrypoint] adding scheduled conversation ID strategy columns..."
+  sqlite3 "$DB_PATH" 'ALTER TABLE "ScheduledTask" ADD COLUMN "conversationIdMode" TEXT NOT NULL DEFAULT "preserve"; ALTER TABLE "ScheduledTask" ADD COLUMN "conversationIdEvery" INTEGER NOT NULL DEFAULT 1;'
 fi
 
 echo "[entrypoint] starting Next.js on port ${APP_PORT}..."
