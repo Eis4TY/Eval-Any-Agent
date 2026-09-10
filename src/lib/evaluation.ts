@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { buildEvaluationContext, renderEvaluationPrompt } from "@/lib/eval-template";
 import { evaluateByLlm } from "@/lib/llm-eval";
 import { parseJson, stringifyJson } from "@/lib/json";
-import { notifyDingTalkMarkdown } from "@/lib/dingtalk";
+import { getAppUrl, notifyDingTalkMarkdown } from "@/lib/dingtalk";
 
 function classifyError(error: unknown): { type: string; message: string } {
   if (error instanceof Error) {
@@ -234,9 +234,11 @@ export async function runEvaluationTask(taskId: string) {
       failedAssertions || metrics.failedCount
         ? `\n**问题摘要：**\n${failureLines.join("\n") || "- 存在评估异常，请查看控制台详情"}${failedAssertions > 5 ? `\n- 其余 ${failedAssertions - 5} 条请查看控制台` : ""}`
         : "\n**问题摘要：** 无";
+    const detailUrl = getAppUrl(`dashboard/evaluation-tasks/${task.id}/results`);
+    const detailLink = detailUrl ? `\n\n> [查看评估结果](${detailUrl})` : "";
     notifyDingTalkMarkdown(
       `${headline}｜${datasetName}`,
-      `## ${headline}\n\n**一、测试信息**\n- 环境：${environment}\n- 数据集：${datasetName}\n- 评估器：${task.evaluator.name}\n\n**二、评测范围**\n${conclusion}\n- 意图数量：${total} 条\n- 覆盖工具：${toolCounts.size} 类\n${toolSummaryLines || "- 无"}\n\n**三、评测结果**\n- 评分：${metrics.avgScore === null ? "-" : `${metrics.avgScore.toFixed(1)} / 100`}\n- 通过率：${passRate}%\n- 通过：${metrics.passedCount} / ${metrics.evaluatedCount}\n- 未通过：${failedAssertions}\n- 评估异常：${metrics.failedCount}\n- 执行完成：${metrics.evaluatedCount} / ${total}${failureSection}\n\n> 详细结果：评测控制台 → 评估结果`,
+      `## ${headline}\n\n**一、测试信息**\n- 环境：${environment}\n- 数据集：${datasetName}\n- 评估器：${task.evaluator.name}\n\n**二、评测范围**\n${conclusion}\n- 意图数量：${total} 条\n- 覆盖工具：${toolCounts.size} 类\n${toolSummaryLines || "- 无"}\n\n**三、评测结果**\n- 评分：${metrics.avgScore === null ? "-" : `${metrics.avgScore.toFixed(1)} / 100`}\n- 通过率：${passRate}%\n- 通过：${metrics.passedCount} / ${metrics.evaluatedCount}\n- 未通过：${failedAssertions}\n- 评估异常：${metrics.failedCount}\n- 执行完成：${metrics.evaluatedCount} / ${total}${failureSection}${detailLink}`,
     ).catch(console.error);
   }
 }

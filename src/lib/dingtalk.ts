@@ -1,5 +1,18 @@
 import crypto from "node:crypto";
 
+export function getAppUrl(path: string) {
+  const baseUrl = process.env.APP_BASE_URL?.trim();
+  if (!baseUrl) return null;
+
+  try {
+    const base = new URL(baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`);
+    if (base.protocol !== "http:" && base.protocol !== "https:") return null;
+    return new URL(path.replace(/^\//, ""), base).toString();
+  } catch {
+    return null;
+  }
+}
+
 export async function notifyDingTalkMarkdown(title: string, text: string) {
   const webhook = process.env.DINGTALK_WEBHOOK;
   if (!webhook) return;
