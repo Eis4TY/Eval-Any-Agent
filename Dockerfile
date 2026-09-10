@@ -25,7 +25,7 @@ ENV APP_PORT=3000
 ENV PRISMA_SKIP_POSTINSTALL_GENERATE=1
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends sqlite3 ca-certificates \
+  && apt-get install -y --no-install-recommends sqlite3 ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
 
 RUN npm config set registry https://mirrors.tuna.tsinghua.edu.cn/npm/

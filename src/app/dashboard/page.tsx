@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -75,6 +75,7 @@ type Task = {
   dataset: { name: string };
   profile: { name: string };
 };
+type ScheduledTask = { id: string; name: string; datasetId: string; profileId: string; scheduleType: string; cronExpr: string | null; intervalMs: number | null; enabled: boolean; nextRunAt: string; lastRunAt: string | null; dataset: { name: string }; profile: { name: string } };
 
 type ResultRow = {
   id: string;
@@ -164,7 +165,7 @@ type EvaluationResultRow = {
 
 const DEFAULT_EXTRACT_RULES = JSON.stringify([], null, 2);
 const DEFAULT_EVALUATOR_USER_PROMPT =
-  "请评估以下任务结果。\n输入：{{input}}\n参考答案：{{reference_output}}\n模型输出：{{outputs_json}}\n任务状态：{{result.status}}";
+  "请使用期望工具契约评估实际工具调用。评估器必须通用，不得根据领域知识、用户原话或历史经验自行增加规则。只检查契约明确声明的内容：工具名、允许的等价工具、required_params，以及明确声明的 rules。若 required_params 为空，只检查工具名，不检查任何参数；契约未声明的参数不得扣分。优先使用结构化的实际工具调用列表 tool_calls_json；其中 params 已合并工具输入和工具返回参数。允许辅助工具、参数顺序、JSON格式和自然语言表达差异。不要要求工具执行后的业务结果、最终页面内容或模型自然语言回复。\n用户输入：{{input.Input}}\n期望工具契约：{{reference_output}}\n实际工具调用列表：{{tool_calls_json}}\n模型最终输出：{{outputs_json}}\n执行状态：{{result.status}}\n只返回 JSON：{\"score\":0,\"passed\":false,\"reason\":\"简短说明\"}";
 
 function stringifyPreviewValue(value: unknown) {
   if (typeof value === "string") return value;
@@ -201,8 +202,16 @@ export default function DashboardPage() {
   const [providerHealth, setProviderHealth] = useState<Record<string, ProviderHealth>>({});
   const [evaluators, setEvaluators] = useState<Evaluator[]>([]);
   const [evaluationTasks, setEvaluationTasks] = useState<EvaluationTask[]>([]);
+  const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
+  const [scheduleName, setScheduleName] = useState("每日评测");
+  const [scheduleTime, setScheduleTime] = useState("23:30");
+  const [timePickerOpen, setTimePickerOpen] = useState(false);
+  const [scheduleConversationMode, setScheduleConversationMode] = useState<"preserve" | "per_row" | "every_n_rows">("per_row");
+  const [scheduleConversationEvery, setScheduleConversationEvery] = useState("10");
 
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
   const [uploadName, setUploadName] = useState("");
 
   const [isCurlDialogOpen, setIsCurlDialogOpen] = useState(false);
@@ -227,9 +236,11 @@ export default function DashboardPage() {
 
   const [taskDatasetId, setTaskDatasetId] = useState("");
   const [taskProfileId, setTaskProfileId] = useState("");
-  const [taskConcurrency, setTaskConcurrency] = useState("20");
+  const [taskConcurrency, setTaskConcurrency] = useState("2");
   const [taskTimeoutMs, setTaskTimeoutMs] = useState("60000");
   const [taskRetry, setTaskRetry] = useState("2");
+  const [conversationIdMode, setConversationIdMode] = useState<"preserve" | "per_row" | "every_n_rows">("preserve");
+  const [conversationIdEvery, setConversationIdEvery] = useState("10");
 
   const [previewTaskId, setPreviewTaskId] = useState("");
   const [liveRows, setLiveRows] = useState<ResultRow[]>([]);
@@ -357,13 +368,14 @@ export default function DashboardPage() {
   }, [providers]);
 
   const loadBase = useCallback(async () => {
-    const [ds, ps, ts, providerList, evaluatorList, evalTaskList] = await Promise.all([
+    const [ds, ps, ts, providerList, evaluatorList, evalTaskList, scheduleList] = await Promise.all([
       api<Dataset[]>("/api/datasets"),
       api<Profile[]>("/api/profiles"),
       api<Task[]>("/api/tasks"),
       api<ProviderConfig[]>("/api/llm-providers"),
       api<Evaluator[]>("/api/evaluators"),
       api<EvaluationTask[]>("/api/evaluation-tasks"),
+      api<ScheduledTask[]>("/api/schedules"),
     ]);
     setDatasets(ds);
     setProfiles(ps);
@@ -371,6 +383,7 @@ export default function DashboardPage() {
     setProviders(providerList);
     setEvaluators(evaluatorList);
     setEvaluationTasks(evalTaskList);
+    setScheduledTasks(scheduleList);
 
     if ((!taskDatasetId || !ds.some((d) => d.id === taskDatasetId)) && ds[0]) setTaskDatasetId(ds[0].id);
     if ((!dryRunDatasetId || !ds.some((d) => d.id === dryRunDatasetId)) && ds[0]) setDryRunDatasetId(ds[0].id);
@@ -410,6 +423,14 @@ export default function DashboardPage() {
       resetProfileForm();
     }
   }, [dryRunDatasetId, dryRunProfileId, editingEvaluatorId, editingProfileId, editingProviderId, evaluationSourceTaskId, evaluationTaskId, evaluatorDryRunTaskId, evaluatorProviderId, previewTaskId, resetEvaluatorForm, resetProfileForm, resetProviderForm, resultTaskId, taskDatasetId, taskProfileId]);
+
+  async function createSchedule() {
+    if (!taskDatasetId || !taskProfileId) return toast.error("请选择数据集和配置");
+    await api("/api/schedules", { method: "POST", body: JSON.stringify({ name: scheduleName, datasetId: taskDatasetId, profileId: taskProfileId, scheduleType: "daily", conversationIdMode: scheduleConversationMode, conversationIdEvery: Number(scheduleConversationEvery), timeOfDay: scheduleTime }) });
+    toast.success("定时任务已创建"); await loadBase();
+  }
+  async function toggleSchedule(item: ScheduledTask) { await api(`/api/schedules/${item.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !item.enabled }) }); await loadBase(); }
+  async function deleteSchedule(id: string) { await api(`/api/schedules/${id}`, { method: "DELETE" }); await loadBase(); }
 
   const loadResults = useCallback(async () => {
     if (!resultTaskId) return;
@@ -529,7 +550,9 @@ export default function DashboardPage() {
   }, [activeTab, loadBase, loadEvaluationResults]);
 
   async function uploadDataset() {
-    if (!uploadFile) return;
+    if (!uploadFile || uploading) return;
+    setUploading(true);
+    try {
     const formData = new FormData();
     formData.set("file", uploadFile);
     formData.set("name", uploadName);
@@ -537,7 +560,13 @@ export default function DashboardPage() {
     toast.success("数据集上传成功");
     setUploadFile(null);
     setUploadName("");
+    if (uploadInputRef.current) uploadInputRef.current.value = "";
     await loadBase();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "上传失败，请重试");
+    } finally {
+      setUploading(false);
+    }
   }
 
   async function deleteDataset(datasetId: string) {
@@ -809,6 +838,8 @@ export default function DashboardPage() {
         concurrency: Number(taskConcurrency),
         timeoutMs: Number(taskTimeoutMs),
         retryCount: Number(taskRetry),
+        conversationIdMode,
+        conversationIdEvery: Number(conversationIdEvery),
       }),
     });
     toast.success("任务已创建");
@@ -1137,7 +1168,7 @@ export default function DashboardPage() {
     : 0;
 
   return (
-    <div className="min-h-screen bg-muted/30 p-4 md:p-8">
+    <div className="dashboard-shell min-h-screen bg-muted/30 p-4 md:p-8">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -1151,11 +1182,12 @@ export default function DashboardPage() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-7">
+          <TabsList className="flex h-auto w-full justify-start overflow-x-auto [&>button]:shrink-0 [&>button]:flex-1">
             <TabsTrigger value="datasets">数据集</TabsTrigger>
             <TabsTrigger value="profiles">配置中心</TabsTrigger>
             <TabsTrigger value="dryrun">Dry Run</TabsTrigger>
             <TabsTrigger value="tasks">任务执行</TabsTrigger>
+            <TabsTrigger value="schedules">定时任务</TabsTrigger>
             <TabsTrigger value="results">结果与导出</TabsTrigger>
             <TabsTrigger value="evaluators">评估器</TabsTrigger>
             <TabsTrigger value="evaluation-results">评估结果</TabsTrigger>
@@ -1165,13 +1197,23 @@ export default function DashboardPage() {
             <Card>
               <CardHeader>
                 <CardTitle>上传数据集</CardTitle>
-                <CardDescription>支持 CSV/XLSX</CardDescription>
+                <CardDescription>选择文件，确认名称后点击上传。支持 CSV、XLSX 和 XLS。</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                  <Input placeholder="数据集名称（可选）" value={uploadName} onChange={(e) => setUploadName(e.target.value)} />
-                  <Input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} />
-                  <Button onClick={uploadDataset} disabled={!uploadFile}>上传</Button>
+                <div className="grid min-w-0 items-end gap-4 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto]">
+                  <div className="min-w-0 space-y-2">
+                    <div className="text-sm font-medium">数据文件</div>
+                    <input ref={uploadInputRef} className="hidden" type="file" accept=".csv,.xlsx,.xls" disabled={uploading} onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} />
+                    <div className="flex h-9 min-w-0 items-center gap-3">
+                      <Button type="button" variant="outline" disabled={uploading} onClick={() => uploadInputRef.current?.click()}>{uploadFile ? "更换文件" : "选择文件"}</Button>
+                      <span className="min-w-0 truncate text-sm text-muted-foreground" title={uploadFile?.name}>{uploadFile?.name ?? "尚未选择文件"}</span>
+                    </div>
+                  </div>
+                  <div className="min-w-0 space-y-2">
+                    <label htmlFor="dataset-upload-name" className="text-sm font-medium">数据集名称 <span className="font-normal text-muted-foreground">（可选）</span></label>
+                    <Input id="dataset-upload-name" disabled={uploading} placeholder="留空使用文件名" value={uploadName} onChange={(e) => setUploadName(e.target.value)} />
+                  </div>
+                  <Button onClick={uploadDataset} disabled={!uploadFile || uploading} aria-busy={uploading}>{uploading ? "正在上传…" : "上传数据集"}</Button>
                 </div>
                 <Separator />
                 <Table>
@@ -1214,6 +1256,34 @@ export default function DashboardPage() {
                 </Table>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="schedules">
+            <Card>
+              <CardHeader className="border-b bg-background pb-5">
+                <div className="flex items-start justify-between gap-4"><div><CardTitle className="text-xl tracking-tight">定时评测</CardTitle><CardDescription className="mt-1">让评测按计划自动运行，结果会沉淀到任务记录中。</CardDescription></div><span className="rounded-full border px-3 py-1 text-xs text-muted-foreground">自动化</span></div>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3"><div className="rounded-xl border bg-background p-4"><div className="text-xs text-muted-foreground">计划总数</div><div className="mt-1 text-2xl font-semibold">{scheduledTasks.length}</div></div><div className="rounded-xl border bg-background p-4"><div className="text-xs text-muted-foreground">运行中计划</div><div className="mt-1 text-2xl font-semibold">{scheduledTasks.filter((item) => item.enabled).length}</div></div><div className="rounded-xl border bg-background p-4"><div className="text-xs text-muted-foreground">执行方式</div><div className="mt-1 text-base font-semibold">每日定时 / 自动隔离会话</div></div></div>
+                <div className="rounded-lg border bg-muted/20 p-4">
+                  <div className="mb-4"><div className="text-sm font-semibold">新建计划</div><div className="mt-1 text-xs text-muted-foreground">选择数据集和接口配置，再设定每天的执行时间。</div></div>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-12">
+                    <div className="space-y-1 md:col-span-3"><div className="text-xs text-muted-foreground">任务名称</div><Input value={scheduleName} onChange={(e) => setScheduleName(e.target.value)} placeholder="例如：每日评测" /></div>
+                    <div className="space-y-1 md:col-span-3"><div className="text-xs text-muted-foreground">数据集</div>{datasets.length ? <Select value={taskDatasetId} onValueChange={setTaskDatasetId}><SelectTrigger><SelectValue placeholder="选择数据集" /></SelectTrigger><SelectContent>{datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent></Select> : <div className="flex h-10 items-center justify-between rounded-md border border-dashed px-3 text-sm text-muted-foreground"><span>还没有数据集</span><Button type="button" size="sm" variant="outline" onClick={() => setActiveTab("datasets")}>去上传</Button></div>}</div>
+                    <div className="space-y-1 md:col-span-3"><div className="text-xs text-muted-foreground">配置</div><Select value={taskProfileId} onValueChange={setTaskProfileId}><SelectTrigger><SelectValue placeholder="选择配置" /></SelectTrigger><SelectContent>{profiles.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent></Select></div>
+                    <div className="space-y-1 md:col-span-3"><div className="text-xs text-muted-foreground">每天执行时间</div><div className="relative"><Button type="button" variant="outline" className="h-10 w-full justify-between rounded-lg px-3 font-sans text-base font-medium" onClick={() => setTimePickerOpen((open) => !open)}><span>{scheduleTime}</span><span className="text-xs font-normal text-muted-foreground">选择时间</span></Button>{timePickerOpen && <div className="absolute left-0 top-12 z-50 w-[260px] rounded-xl border bg-background p-3 shadow-xl"><div className="mb-2 flex items-center justify-between px-1"><span className="text-xs font-medium text-muted-foreground">选择每天执行时间</span><Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setTimePickerOpen(false)}>完成</Button></div><div className="grid grid-cols-2 gap-2"><div className="rounded-lg bg-muted/40 p-1"><div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">小时</div><div className="max-h-48 space-y-0.5 overflow-y-auto">{Array.from({length:24},(_,i)=>String(i).padStart(2,"0")).map((h)=><button type="button" key={h} className={`w-full rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-background ${scheduleTime.slice(0,2)===h ? "bg-foreground text-background" : "text-foreground"}`} onClick={()=>setScheduleTime(`${h}:${scheduleTime.slice(3)}`)}>{h}</button>)}</div></div><div className="rounded-lg bg-muted/40 p-1"><div className="px-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground">分钟</div><div className="max-h-48 space-y-0.5 overflow-y-auto">{["00","15","30","45"].map((m)=><button type="button" key={m} className={`w-full rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-background ${scheduleTime.slice(3)===m ? "bg-foreground text-background" : "text-foreground"}`} onClick={()=>setScheduleTime(`${scheduleTime.slice(0,2)}:${m}`)}>{m}</button>)}</div></div></div></div>}</div><div className="text-[11px] text-muted-foreground">24 小时制，每 15 分钟可选</div></div>
+                    <div className="space-y-1 md:col-span-4"><div className="text-xs text-muted-foreground">会话隔离</div><Select value={scheduleConversationMode} onValueChange={(v) => setScheduleConversationMode(v as typeof scheduleConversationMode)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="preserve">沿用原会话</SelectItem><SelectItem value="per_row">每条数据独立会话</SelectItem><SelectItem value="every_n_rows">每 N 条数据重置会话</SelectItem></SelectContent></Select><div className="text-[11px] text-muted-foreground">避免批量数据互相携带上下文</div></div>
+                    {scheduleConversationMode === "every_n_rows" && <div className="space-y-1 md:col-span-2"><div className="text-xs text-muted-foreground">N</div><Input type="number" min="1" value={scheduleConversationEvery} onChange={(e) => setScheduleConversationEvery(e.target.value)} /></div>}
+                    <div className="flex items-start pt-5 md:col-span-4"><Button className="w-full md:w-auto" onClick={createSchedule}>创建定时任务</Button></div>
+                  </div>
+                  <div className="mt-3 text-xs text-muted-foreground">评测完成后，可在“任务执行”查看进度，在“结果与导出”查看和下载报告。</div>
+                </div>
+                <Separator />
+              <div className="space-y-3">
+                  <div className="flex items-center justify-between"><div><div className="text-sm font-medium">计划列表</div><div className="text-xs text-muted-foreground">共 {scheduledTasks.length} 个计划</div></div></div>
+                  <div className="overflow-x-auto rounded-xl border"><Table><TableHeader className="bg-muted/40"><TableRow><TableHead className="h-11">名称</TableHead><TableHead>数据集 / 配置</TableHead><TableHead>执行时间</TableHead><TableHead>下次执行</TableHead><TableHead>状态</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader><TableBody>{scheduledTasks.length === 0 ? <TableRow><TableCell colSpan={6} className="h-28 text-center text-sm text-muted-foreground">暂无定时任务<br /><span className="text-xs">创建第一个自动评测计划</span></TableCell></TableRow> : scheduledTasks.map((item) => <TableRow key={item.id} className="hover:bg-muted/30"><TableCell className="font-medium">{item.name}</TableCell><TableCell><div>{item.dataset.name}</div><div className="text-xs text-muted-foreground">{item.profile.name}</div></TableCell><TableCell className="font-mono text-xs">{item.scheduleType === "cron" ? `每天 ${item.cronExpr?.split(" ")[1]?.padStart(2, "0")}:${item.cronExpr?.split(" ")[0]?.padStart(2, "0")}` : "每 24 小时"}</TableCell><TableCell className="whitespace-nowrap">{formatDateTime(item.nextRunAt)}</TableCell><TableCell><Badge variant={item.enabled ? "default" : "secondary"} className="rounded-full px-2.5">{item.enabled ? "启用" : "停用"}</Badge></TableCell><TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" className="rounded-full" onClick={() => toggleSchedule(item)}>{item.enabled ? "停用" : "启用"}</Button><Button size="sm" variant="destructive" className="rounded-full" onClick={() => deleteSchedule(item.id)}>删除</Button></div></TableCell></TableRow>)}</TableBody></Table></div>
+                </div>
+              </CardContent></Card>
           </TabsContent>
 
           <TabsContent value="profiles">
@@ -1542,18 +1612,18 @@ export default function DashboardPage() {
                 <CardDescription>动态组合数据集与配置，创建并管理任务</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-                  <div className="space-y-1">
+                <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[minmax(0,2fr)_minmax(0,1.5fr)_minmax(0,.7fr)_minmax(0,1fr)_minmax(0,.7fr)_minmax(0,1.4fr)] [&>div]:min-w-0 [&_[data-slot=select-trigger]]:w-full [&_[data-slot=select-trigger]]:min-w-0 [&_[data-slot=select-value]]:min-w-0 [&_[data-slot=select-value]]:truncate [&_[data-slot=select-value]]:block">
+                  <div className="min-w-0 space-y-1">
                     <div className="text-sm font-medium">数据集</div>
                     <Select value={taskDatasetId} onValueChange={setTaskDatasetId}>
-                      <SelectTrigger><SelectValue placeholder="数据集" /></SelectTrigger>
+                      <SelectTrigger className="min-w-0"><SelectValue placeholder="数据集" /></SelectTrigger>
                       <SelectContent>{datasets.map((d) => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-1">
+                  <div className="min-w-0 space-y-1">
                     <div className="text-sm font-medium">配置</div>
                     <Select value={taskProfileId} onValueChange={setTaskProfileId}>
-                      <SelectTrigger><SelectValue placeholder="配置" /></SelectTrigger>
+                      <SelectTrigger className="min-w-0"><SelectValue placeholder="配置" /></SelectTrigger>
                       <SelectContent>{profiles.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
@@ -1569,11 +1639,14 @@ export default function DashboardPage() {
                     <div className="text-sm font-medium">重试次数</div>
                     <Input value={taskRetry} onChange={(e) => setTaskRetry(e.target.value)} placeholder="重试次数" />
                   </div>
+                  <div className="min-w-0 space-y-1"><div className="text-sm font-medium">会话 ID 策略</div><Select value={conversationIdMode} onValueChange={(v) => setConversationIdMode(v as typeof conversationIdMode)}><SelectTrigger className="min-w-0"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="preserve">沿用数据集</SelectItem><SelectItem value="per_row">每条数据新会话</SelectItem><SelectItem value="every_n_rows">每 N 条更换</SelectItem></SelectContent></Select></div>
+                  {conversationIdMode === "every_n_rows" && <div className="space-y-1"><div className="text-sm font-medium">每 N 条</div><Input type="number" min="1" value={conversationIdEvery} onChange={(e) => setConversationIdEvery(e.target.value)} /></div>}
                 </div>
                 <Button onClick={createTask}>创建任务</Button>
 
                 <Separator />
-                <Table>
+                <div className="w-full overflow-x-auto rounded-md border">
+                <Table className="min-w-[880px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>任务ID</TableHead>
@@ -1662,11 +1735,12 @@ export default function DashboardPage() {
                     })}
                   </TableBody>
                 </Table>
+                </div>
 
                 <Separator />
                 <div className="space-y-3">
-                  <div className="flex items-center gap-3">
-                    <div className="text-sm font-medium">实时输出预览</div>
+                  <div className="flex flex-wrap items-center gap-3 [&_[data-slot=select-trigger]]:max-w-[360px]">
+                    <div className="shrink-0 text-sm font-medium">实时输出预览</div>
                     <Select value={previewTaskId} onValueChange={setPreviewTaskId}>
                       <SelectTrigger className="w-[360px]"><SelectValue placeholder="选择任务" /></SelectTrigger>
                       <SelectContent>
@@ -1679,7 +1753,8 @@ export default function DashboardPage() {
                   </div>
 
                   <ScrollArea className="h-72 rounded border">
-                    <Table>
+                    <div className="w-full overflow-x-auto rounded-md border">
+                    <Table className="min-w-[900px]">
                       <TableHeader>
                         <TableRow>
                           <TableHead>行号</TableHead>
@@ -1699,6 +1774,7 @@ export default function DashboardPage() {
                         ))}
                       </TableBody>
                     </Table>
+                    </div>
                   </ScrollArea>
                 </div>
               </CardContent>
@@ -1859,6 +1935,7 @@ export default function DashboardPage() {
                     </div>
                     <Button onClick={saveProvider}>{editingProviderId ? "更新模型配置" : "创建模型配置"}</Button>
 
+                    <div className="w-full overflow-x-auto rounded-md border">
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -1917,6 +1994,7 @@ export default function DashboardPage() {
                         })}
                       </TableBody>
                     </Table>
+                    </div>
                   </div>
 
                   <div className="space-y-4 rounded-lg border p-4">
@@ -2096,7 +2174,7 @@ export default function DashboardPage() {
                 <CardDescription>基于执行任务选择评估器发起评估，查看平均分、通过率并导出 Excel</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 gap-4 rounded-lg border p-4 xl:grid-cols-[320px_1fr]">
+                <div className="grid min-w-0 grid-cols-1 items-start gap-4 rounded-lg border p-4 xl:grid-cols-[320px_minmax(0,1fr)]">
                   <div className="space-y-3">
                     <div className="text-sm font-medium">创建评估任务</div>
                     <Select value={evaluationSourceTaskId} onValueChange={setEvaluationSourceTaskId}>
@@ -2105,25 +2183,27 @@ export default function DashboardPage() {
                         {tasks.map((task) => <SelectItem key={task.id} value={task.id}>{task.id.slice(0, 8)} - {task.profile.name}</SelectItem>)}
                       </SelectContent>
                     </Select>
-                    <ScrollArea className="h-64 rounded border">
+                    <div className="max-h-64 overflow-y-auto rounded-md border">
                       <div className="space-y-2 p-2">
                         {evaluators.map((item) => (
                           <label key={item.id} className="flex items-start gap-2 rounded border p-2 text-sm">
                             <Checkbox checked={selectedEvaluatorIds.includes(item.id)} onCheckedChange={() => toggleSelectedEvaluator(item.id)} />
-                            <div>
+                            <div className="min-w-0 break-words">
                               <div className="font-medium">{item.name}</div>
                               <div className="text-xs text-muted-foreground">{item.model} / 阈值 {item.passThreshold}</div>
                             </div>
                           </label>
                         ))}
                       </div>
-                    </ScrollArea>
-                    <Button onClick={createEvaluationTasks}>开始评估</Button>
+                    </div>
+                    <Button onClick={createEvaluationTasks} disabled={!evaluationSourceTaskId || !selectedEvaluatorIds.length}>开始评估</Button>
                   </div>
 
                   <div className="space-y-3">
                     <div className="text-sm font-medium">评估任务列表</div>
-                    <Table>
+                    <div className="w-full overflow-x-auto rounded-md border">
+                    <Table className="w-full min-w-[760px] table-fixed">
+                      <colgroup><col style={{ width: "21%" }} /><col style={{ width: "25%" }} /><col style={{ width: "10%" }} /><col style={{ width: "18%" }} /><col style={{ width: "12%" }} /><col style={{ width: "14%" }} /></colgroup>
                       <TableHeader>
                         <TableRow>
                           <TableHead>评估器</TableHead>
@@ -2143,13 +2223,13 @@ export default function DashboardPage() {
 
                           return (
                             <TableRow key={task.id}>
-                              <TableCell>{task.evaluator?.name ?? "-"}</TableCell>
-                              <TableCell>{task.sourceTask?.dataset?.name ?? "-"} / {task.sourceTask?.profile?.name ?? "-"}</TableCell>
+                              <TableCell className="w-[22%] max-w-[220px] truncate" title={task.evaluator?.name ?? "-"}>{task.evaluator?.name ?? "-"}</TableCell>
+                              <TableCell className="w-[30%] max-w-[320px] truncate" title={`${task.sourceTask?.dataset?.name ?? "-"} / ${task.sourceTask?.profile?.name ?? "-"}`}>{task.sourceTask?.dataset?.name ?? "-"} / {task.sourceTask?.profile?.name ?? "-"}</TableCell>
                               <TableCell className="w-[220px]"><Progress value={evaluationProgress} /></TableCell>
                               <TableCell>{formatDateTime(task.createdAt)}</TableCell>
                               <TableCell><Badge>{task.status}</Badge></TableCell>
-                              <TableCell>
-                                <div className="flex items-center gap-2">
+                              <TableCell className="whitespace-nowrap">
+                                <div className="flex flex-nowrap items-center gap-2">
                                   <Button size="sm" variant="outline" asChild>
                                     <Link
                                       href={`/dashboard/evaluation-tasks/${task.id}/results`}
@@ -2176,6 +2256,7 @@ export default function DashboardPage() {
                         })}
                       </TableBody>
                     </Table>
+                    </div>
                   </div>
                 </div>
 

@@ -2,7 +2,8 @@ import pLimit from "p-limit";
 import { prisma } from "@/lib/prisma";
 import { buildEvaluationContext, renderEvaluationPrompt } from "@/lib/eval-template";
 import { evaluateByLlm } from "@/lib/llm-eval";
-import { stringifyJson } from "@/lib/json";
+import { parseJson, stringifyJson } from "@/lib/json";
+import { getAppUrl, notifyDingTalkMarkdown } from "@/lib/dingtalk";
 
 function classifyError(error: unknown): { type: string; message: string } {
   if (error instanceof Error) {
@@ -23,6 +24,8 @@ async function refreshEvaluationTaskMetrics(taskId: string) {
   const avgScore = results.length
     ? results.reduce((sum, item) => sum + (item.score ?? 0), 0) / results.length
     : null;
+  const passedCount = await prisma.evaluationResult.count({ where: { evaluationTaskId: taskId, status: "success", passed: true } });
+  const failedCount = await prisma.evaluationResult.count({ where: { evaluationTaskId: taskId, status: "failed" } });
 
   await prisma.evaluationTask.update({
     where: { id: taskId },
@@ -31,6 +34,7 @@ async function refreshEvaluationTaskMetrics(taskId: string) {
       endedAt: new Date(),
     },
   });
+  return { avgScore, passedCount, failedCount, evaluatedCount: results.length };
 }
 
 export async function runEvaluationTask(taskId: string) {
@@ -40,6 +44,8 @@ export async function runEvaluationTask(taskId: string) {
       evaluator: { include: { providerConfig: true } },
       sourceTask: {
         include: {
+          dataset: true,
+          profile: true,
           results: {
             orderBy: { rowIndex: "asc" },
           },
@@ -154,13 +160,87 @@ export async function runEvaluationTask(taskId: string) {
   );
 
   const finishedTask = await prisma.evaluationTask.findUnique({ where: { id: task.id }, select: { status: true } });
+  const finalStatus = finishedTask?.status === "stopped" ? "stopped" : "completed";
   await prisma.evaluationTask.update({
     where: { id: task.id },
     data: {
-      status: finishedTask?.status === "stopped" ? "stopped" : "completed",
+      status: finalStatus,
     },
   });
-  await refreshEvaluationTaskMetrics(task.id);
+  const metrics = await refreshEvaluationTaskMetrics(task.id);
+  if (finalStatus === "completed") {
+    const total = sourceResults.length;
+    const passRate = metrics.evaluatedCount ? ((metrics.passedCount / metrics.evaluatedCount) * 100).toFixed(1) : "0.0";
+    const toolCounts = new Map<string, number>();
+    for (const sourceResult of sourceResults) {
+      const input = parseJson<Record<string, unknown>>(sourceResult.inputData, {});
+      const reference = typeof input.reference_output === "string" ? parseJson<Record<string, unknown>>(input.reference_output, {}) : {};
+      const tools = Array.isArray(reference.tools) ? reference.tools : [];
+      const names = new Set<string>();
+      for (const tool of tools) {
+        if (!tool || typeof tool !== "object") continue;
+        const values = (tool as Record<string, unknown>).names;
+        if (Array.isArray(values)) values.filter((name): name is string => typeof name === "string").forEach((name) => names.add(name));
+      }
+      names.forEach((name) => toolCounts.set(name, (toolCounts.get(name) ?? 0) + 1));
+    }
+    const toolLabels: Record<string, string> = {
+      payment: "支付",
+      wechat_pay: "微信支付",
+      control_calendar: "日程",
+      control_memo: "备忘",
+      navigation: "导航",
+      search_around: "附近搜索",
+      cut_agent: "天气",
+      take_photo: "拍照识别",
+      control_volume: "音量",
+      control_brightness: "亮度",
+      phone_call: "电话",
+      record_audio: "录音",
+      record_video: "录像",
+      voice_wake_up: "语音唤醒",
+      zoom_map: "地图缩放",
+      calculate_relative_time: "相对时间",
+      doubao_search: "豆包搜索",
+      jd: "同款购",
+      next_holiday: "节假日查询",
+    };
+    const toolEntries = [...toolCounts.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, count]) => `${toolLabels[name] ?? name}（${count}）`);
+    const toolSummaryLines = Array.from({ length: Math.ceil(toolEntries.length / 5) }, (_, index) =>
+      `- ${toolEntries.slice(index * 5, index * 5 + 5).join("、")}`,
+    ).join("\n");
+    const datasetName = task.sourceTask.dataset.name.match(/^每日冒烟评测集_\d{4}/)?.[0] ?? task.sourceTask.dataset.name;
+    const environment = task.sourceTask.profile.name;
+    const failedAssertions = metrics.evaluatedCount - metrics.passedCount;
+    const failedResults = await prisma.evaluationResult.findMany({
+      where: { evaluationTaskId: task.id, status: "success", passed: false },
+      orderBy: { rowIndex: "asc" },
+      take: 5,
+      include: { sourceResult: { select: { inputData: true } } },
+    });
+    const failureLines = failedResults.map((result) => {
+      const input = parseJson<Record<string, unknown>>(result.sourceResult.inputData, {});
+      const text = typeof input.Input === "string" ? input.Input : `第 ${result.rowIndex + 1} 条`;
+      return `- 第 ${result.rowIndex + 1} 条：${text}（${result.reason || "未通过"}）`;
+    });
+    const allPassed = failedAssertions === 0 && metrics.failedCount === 0;
+    const headline = allPassed ? "✅ 云端意图验证通过" : "⚠️ 云端意图验证发现问题";
+    const conclusion = allPassed
+      ? `本次在测试环境验证了 ${total} 条意图，覆盖 ${toolCounts.size} 类工具，云端意图识别和工具路由均正常。`
+      : `本次在测试环境验证了 ${total} 条意图，覆盖 ${toolCounts.size} 类工具，仍有 ${failedAssertions + metrics.failedCount} 条需要关注。`;
+    const failureSection =
+      failedAssertions || metrics.failedCount
+        ? `\n**问题摘要：**\n${failureLines.join("\n") || "- 存在评估异常，请查看控制台详情"}${failedAssertions > 5 ? `\n- 其余 ${failedAssertions - 5} 条请查看控制台` : ""}`
+        : "\n**问题摘要：** 无";
+    const detailUrl = getAppUrl(`dashboard/evaluation-tasks/${task.id}/results`);
+    const detailLink = detailUrl ? `\n\n> [查看评估结果](${detailUrl})` : "";
+    notifyDingTalkMarkdown(
+      `${headline}｜${datasetName}`,
+      `## ${headline}\n\n**一、测试信息**\n- 环境：${environment}\n- 数据集：${datasetName}\n- 评估器：${task.evaluator.name}\n\n**二、评测范围**\n${conclusion}\n- 意图数量：${total} 条\n- 覆盖工具：${toolCounts.size} 类\n${toolSummaryLines || "- 无"}\n\n**三、评测结果**\n- 评分：${metrics.avgScore === null ? "-" : `${metrics.avgScore.toFixed(1)} / 100`}\n- 通过率：${passRate}%\n- 通过：${metrics.passedCount} / ${metrics.evaluatedCount}\n- 未通过：${failedAssertions}\n- 评估异常：${metrics.failedCount}\n- 执行完成：${metrics.evaluatedCount} / ${total}${failureSection}${detailLink}`,
+    ).catch(console.error);
+  }
 }
 
 export function getMaskedApiKey(apiKey: string) {

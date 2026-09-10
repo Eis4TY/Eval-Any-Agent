@@ -6,6 +6,20 @@ function resolveDynamicToken(token: string): string {
       return crypto.randomUUID();
     case "$date.now":
       return new Date().toISOString();
+    case "$date.local": {
+      const parts = new Intl.DateTimeFormat("zh-CN", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).formatToParts(new Date());
+      const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "00";
+      return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}:${get("second")}`;
+    }
     default:
       return `{{${token}}}`;
   }

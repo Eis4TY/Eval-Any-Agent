@@ -10,6 +10,8 @@ const schema = z.object({
   concurrency: z.number().int().min(1).max(50).default(20),
   timeoutMs: z.number().int().positive().default(60000),
   retryCount: z.number().int().min(0).max(5).default(2),
+  conversationIdMode: z.enum(["preserve", "per_row", "every_n_rows"]).default("preserve"),
+  conversationIdEvery: z.number().int().min(1).max(100000).default(1),
 });
 
 export async function GET() {
@@ -53,6 +55,8 @@ export async function POST(req: Request) {
         concurrency: parsed.data.concurrency,
         timeoutMs: parsed.data.timeoutMs,
         retryCount: parsed.data.retryCount,
+        conversationIdMode: parsed.data.conversationIdMode,
+        conversationIdEvery: parsed.data.conversationIdEvery,
         totalRows: dataset.rowCount,
       },
     });

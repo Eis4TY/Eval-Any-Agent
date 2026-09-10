@@ -3,7 +3,10 @@ set -eu
 
 APP_PORT="${APP_PORT:-3000}"
 DATABASE_URL="${DATABASE_URL:-file:/app/data/dev.db}"
+SCHEDULER_SECRET="${SCHEDULER_SECRET:-change-this-scheduler-secret}"
 export DATABASE_URL
+export SCHEDULER_SECRET
+export DISABLE_SCHEDULER=true
 
 case "$DATABASE_URL" in
   file:*)
@@ -60,10 +63,50 @@ main().catch((error) => {
 NODE
 fi
 
+if [ "$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM pragma_table_info('EvalTask') WHERE name='conversationIdMode';")" = "0" ]; then
+  echo "[entrypoint] adding conversation ID strategy columns..."
+  sqlite3 "$DB_PATH" 'ALTER TABLE "EvalTask" ADD COLUMN "conversationIdMode" TEXT NOT NULL DEFAULT "preserve"; ALTER TABLE "EvalTask" ADD COLUMN "conversationIdEvery" INTEGER NOT NULL DEFAULT 1;'
+fi
+
+if [ "$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM pragma_table_info('ScheduledTask') WHERE name='conversationIdMode';")" = "0" ]; then
+  echo "[entrypoint] adding scheduled conversation ID strategy columns..."
+  sqlite3 "$DB_PATH" 'ALTER TABLE "ScheduledTask" ADD COLUMN "conversationIdMode" TEXT NOT NULL DEFAULT "preserve"; ALTER TABLE "ScheduledTask" ADD COLUMN "conversationIdEvery" INTEGER NOT NULL DEFAULT 1;'
+fi
+
 if [ "$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM pragma_table_info('Evaluator') WHERE name='thinkingEnabled';")" = "0" ]; then
   echo "[entrypoint] adding missing Evaluator.thinkingEnabled column..."
   sqlite3 "$DB_PATH" 'ALTER TABLE "Evaluator" ADD COLUMN "thinkingEnabled" BOOLEAN NOT NULL DEFAULT false;'
 fi
 
+if [ "$(sqlite3 "$DB_PATH" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ScheduledTask';")" = "0" ]; then
+  echo "[entrypoint] adding ScheduledTask table..."
+  sqlite3 "$DB_PATH" <<'SQL'
+CREATE TABLE "ScheduledTask" (
+  "id" TEXT NOT NULL PRIMARY KEY, "userId" TEXT NOT NULL, "name" TEXT NOT NULL,
+  "datasetId" TEXT NOT NULL, "profileId" TEXT NOT NULL, "concurrency" INTEGER NOT NULL DEFAULT 20,
+  "timeoutMs" INTEGER NOT NULL DEFAULT 60000, "retryCount" INTEGER NOT NULL DEFAULT 2,
+  "scheduleType" TEXT NOT NULL, "cronExpr" TEXT, "intervalMs" INTEGER,
+  "timezone" TEXT NOT NULL DEFAULT 'Asia/Shanghai', "enabled" BOOLEAN NOT NULL DEFAULT true,
+  "lastRunAt" DATETIME, "nextRunAt" DATETIME NOT NULL, "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" DATETIME NOT NULL,
+  CONSTRAINT "ScheduledTask_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT "ScheduledTask_datasetId_fkey" FOREIGN KEY ("datasetId") REFERENCES "Dataset" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT "ScheduledTask_profileId_fkey" FOREIGN KEY ("profileId") REFERENCES "MappingProfile" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX "ScheduledTask_userId_enabled_nextRunAt_idx" ON "ScheduledTask"("userId", "enabled", "nextRunAt");
+SQL
+fi
+
 echo "[entrypoint] starting Next.js on port ${APP_PORT}..."
-exec npm run start -- -p "${APP_PORT}"
+npm run start -- -p "${APP_PORT}" &
+APP_PID=$!
+
+echo "[entrypoint] starting scheduler loop..."
+(
+  while kill -0 "$APP_PID" 2>/dev/null; do
+    sleep 30
+    curl -fsS -X POST "http://127.0.0.1:${APP_PORT}/api/scheduler/tick" -H "x-scheduler-secret: ${SCHEDULER_SECRET}" >/dev/null || true
+  done
+) &
+
+wait "$APP_PID"

@@ -48,6 +48,10 @@ export async function runEvalTask(taskId: string) {
         }
 
         const variables = buildVariables(row, inputBindings);
+        if (task.conversationIdMode !== "preserve") {
+          const group = task.conversationIdMode === "every_n_rows" ? Math.floor(rowIndex / task.conversationIdEvery) : rowIndex;
+          variables.conversation_id = `${taskId}-${group}`;
+        }
         const payload = renderRequestTemplate(task.profile.requestTemplate, variables);
         const headers = renderHeaderTemplate(headerTemplate, variables);
 
@@ -123,11 +127,12 @@ export async function runEvalTask(taskId: string) {
     ),
   );
 
-  const finishedTask = await prisma.evalTask.findUnique({ where: { id: taskId }, select: { status: true } });
+  const finishedTask = await prisma.evalTask.findUnique({ where: { id: taskId }, select: { status: true, totalRows: true, successRows: true, failedRows: true, startedAt: true } });
+  const status = finishedTask?.status === "stopped" ? "stopped" : "completed";
   await prisma.evalTask.update({
     where: { id: taskId },
     data: {
-      status: finishedTask?.status === "stopped" ? "stopped" : "completed",
+      status,
       endedAt: new Date(),
     },
   });
